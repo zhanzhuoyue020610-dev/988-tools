@@ -10,7 +10,6 @@ import time
 import io
 import os
 import hashlib
-import datetime
 import cloudscraper
 from bs4 import BeautifulSoup 
 
@@ -96,7 +95,7 @@ def get_user_leads_history(username):
     except: return pd.DataFrame()
 
 # ==========================================
-# 🎨 UI 主题：深空灰·专业版 (Deep Space Pro)
+# 🎨 UI 主题：深空灰·移动端适配版
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="🚛")
 
@@ -104,15 +103,21 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
     
-    /* === 1. 全局背景 (纯净深灰，去除去渐变动画) === */
+    /* === 1. 全局背景 === */
     .stApp {
         background-color: #121212 !important;
         font-family: 'Inter', sans-serif;
     }
     
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
+    /* === 关键修复：允许 Header 显示，否则手机端无法点开侧边栏，但让它透明 === */
+    header {
+        visibility: visible !important;
+        background-color: transparent !important;
+    }
+    #MainMenu {visibility: visible;} 
+    footer {visibility: hidden;} 
     
-    /* === 2. 侧边栏 (稍亮一点的灰色) === */
+    /* === 2. 侧边栏 === */
     section[data-testid="stSidebar"] {
         background-color: #181818 !important;
         border-right: 1px solid #333333;
@@ -121,30 +126,61 @@ st.markdown("""
         color: #cccccc !important;
     }
     
-    /* === 3. 卡片与容器 (表单、Expander) === */
+    /* === 3. 顶部导航栏 (横向 Radio) === */
+    div[data-testid="stRadio"] > div {
+        display: flex;
+        flex-direction: row;
+        gap: 10px;
+        background-color: #1e1e1e;
+        padding: 5px;
+        border-radius: 8px;
+        border: 1px solid #333;
+    }
+    /* 导航按钮样式 */
+    div[data-testid="stRadio"] label {
+        flex: 1;
+        background-color: transparent !important;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        text-align: center;
+        padding: 8px 16px;
+        color: #888 !important;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+    /* 选中状态 */
+    div[data-testid="stRadio"] label[data-checked="true"] {
+        background-color: #0078d4 !important;
+        color: white !important;
+        font-weight: bold;
+    }
+    /* 鼠标悬停 */
+    div[data-testid="stRadio"] label:hover {
+        color: white !important;
+        background-color: #2d2d2d !important;
+    }
+
+    /* === 4. 卡片与容器 === */
     div[data-testid="stExpander"], div[data-testid="stForm"], .login-card {
-        background-color: #1e1e1e !important; /* VS Code 编辑器背景色 */
+        background-color: #1e1e1e !important;
         border: 1px solid #333333 !important;
         border-radius: 6px;
-        box-shadow: none !important; /* 去除阴影，扁平化 */
+        box-shadow: none !important;
         margin-bottom: 16px;
         color: #e0e0e0 !important;
     }
     
-    /* === 4. 文字颜色体系 === */
+    /* === 5. 字体与颜色 === */
     h1, h2, h3 { color: #ffffff !important; font-weight: 600 !important; }
-    h4, h5, h6, strong { color: #58a6ff !important; } /* 重点文字用蓝色 */
+    h4, h5, h6, strong { color: #58a6ff !important; }
     p, div, span, label, li { color: #bbbbbb !important; }
     .stCaption { color: #888888 !important; }
 
-    /* === 5. 按钮重构 (扁平化设计) === */
-    
-    /* 通用按钮规则 */
-    button {
-        color: #ffffff !important;
-    }
-
-    /* 主按钮 (Primary) - 沉稳的蓝色 */
+    /* === 6. 按钮系统 === */
+    button { color: #ffffff !important; }
     div.stButton > button, div.stDownloadButton > button, .stFormSubmitButton > button {
         background-color: #0078d4 !important; 
         color: white !important;
@@ -152,96 +188,61 @@ st.markdown("""
         border-radius: 4px;
         padding: 0.6rem 1.2rem;
         font-weight: 500;
-        transition: all 0.2s;
-        box-shadow: none !important;
+        width: 100%; /* 手机端按钮全宽，更易点击 */
     }
-    
-    div.stButton > button:hover, .stFormSubmitButton > button:hover {
+    div.stButton > button:hover {
         background-color: #006cc1 !important;
         border-color: #66b5ff !important;
     }
     
-    /* === 6. 输入框与下拉菜单 (Input/Select) === */
+    /* === 7. 输入框 === */
     div[data-baseweb="input"], div[data-baseweb="select"] {
-        background-color: #252526 !important; /* 输入框背景深灰 */
+        background-color: #252526 !important;
         border: 1px solid #3c3c3c !important;
         border-radius: 4px;
     }
     div[data-baseweb="input"] input, div[data-baseweb="select"] div {
         color: #cccccc !important;
     }
-    /* 聚焦时的高亮边框 */
-    div[data-baseweb="input"]:focus-within, div[data-baseweb="select"]:focus-within {
+    div[data-baseweb="input"]:focus-within {
         border-color: #0078d4 !important;
     }
 
-    /* === 7. 文件上传组件 (File Uploader) === */
+    /* === 8. 文件上传 === */
     [data-testid="stFileUploader"] {
-        padding: 20px;
+        padding: 15px;
         border: 1px dashed #444;
         border-radius: 8px;
         background-color: #1e1e1e;
     }
-    [data-testid="stFileUploader"] section {
-        background-color: #1e1e1e !important;
-    }
+    [data-testid="stFileUploader"] div { color: #bbbbbb !important; }
     [data-testid="stFileUploader"] button {
         background-color: #2d2d2d !important;
-        border: 1px solid #555 !important;
-        color: #fff !important;
-    }
-    /* 针对 "Drag and drop file here" 区域 */
-    [data-testid="stFileUploader"] div {
-        color: #bbbbbb !important;
+        width: auto !important; /* 上传按钮保持自动宽度 */
     }
 
-    /* === 8. 数据表格 (Dataframe) === */
-    div[data-testid="stDataFrame"] {
-        border: 1px solid #333;
-    }
-
-    /* === 9. 状态组件 (Status/Metrics) === */
-    div[data-testid="stStatusWidget"] {
-        background-color: #1e1e1e !important;
-        border: 1px solid #333 !important;
-    }
-    div[data-testid="stMetricValue"] {
-        color: #4ec9b0 !important; /* 护眼的青绿色 */
-    }
-
-    /* === 10. 自定义链接按钮 (WhatsApp/TG) === */
+    /* === 9. 链接按钮 (WhatsApp/TG) === */
     .btn-action {
         display: block !important;
         width: 100% !important;
-        padding: 10px !important;
+        padding: 12px !important;
         color: #ffffff !important;
         text-decoration: none !important;
-        border-radius: 4px;
+        border-radius: 6px;
         font-weight: 500 !important;
         text-align: center;
         margin-top: 8px;
-        font-size: 14px;
-        transition: opacity 0.2s;
+        font-size: 16px; /* 手机端字体加大 */
     }
-    .wa-green { 
-        background-color: #128c7e !important; /* WhatsApp 官方绿 */
-        border: 1px solid #128c7e !important;
-    }
-    .wa-green:hover { opacity: 0.9; }
-    
-    .tg-blue { 
-        background-color: #229ED9 !important; /* Telegram 官方蓝 */
-        border: 1px solid #229ED9 !important;
-    } 
-    .tg-blue:hover { opacity: 0.9; }
+    .wa-green { background-color: #128c7e !important; border: 1px solid #128c7e !important; }
+    .tg-blue { background-color: #229ED9 !important; border: 1px solid #229ED9 !important; }
 
-    /* 分割线颜色 */
     hr { border-color: #333 !important; }
     
 </style>
 """, unsafe_allow_html=True)
 
-# === 核心逻辑 ===
+# === 核心逻辑函数 ===
 
 def extract_all_numbers(row_series):
     txt = " ".join([str(val) for val in row_series if pd.notna(val)])
@@ -385,25 +386,48 @@ if not st.session_state['logged_in']:
                     else: st.error("账号或密码错误")
     st.stop()
 
-# --- Main ---
+# --- 主程序逻辑 ---
 try:
     CN_USER = st.secrets["CN_USER_ID"]
     CN_KEY = st.secrets["CN_API_KEY"]
     OPENAI_KEY = st.secrets["OPENAI_KEY"]
 except: CN_USER=""; CN_KEY=""; OPENAI_KEY=""
 
+# 侧边栏：仅保留用户信息和退出按钮（不再放导航，以免手机端找不到）
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", width=180)
     st.markdown(f"👋 **{st.session_state['real_name']}**")
-    
-    menu = st.radio("导航菜单", ["🚀 客户开发 (Workbench)", "📂 历史记录 (History)", "📊 管理后台 (Admin)"] if st.session_state['role']=='admin' else ["🚀 客户开发 (Workbench)", "📂 历史记录 (History)"])
+    st.caption(f"角色: {st.session_state['role']}")
     st.divider()
-    if st.button("🚪 退出登录"): st.session_state.clear(); st.rerun()
+    if st.button("🚪 退出登录"): 
+        st.session_state.clear()
+        st.rerun()
 
-# 1. Workbench
-if "Workbench" in str(menu):
-    st.title("🚀 智能获客工作台")
-    st.caption("AI 驱动的供应链客户挖掘系统 | v51.0 Pro")
+# ==========================================
+# 🚀 顶部导航栏 (手机端可见性修复核心)
+# ==========================================
+# 我们将导航从侧边栏移到主页面顶部，这样手机端无需点击汉堡菜单即可切换
+menu_options = ["Workbench", "History"]
+menu_icons = ["🚀 客户开发", "📂 历史记录"]
+
+if st.session_state['role'] == 'admin':
+    menu_options.append("Admin")
+    menu_icons.append("📊 管理后台")
+
+# 使用横向 Radio Button 模拟 Tab 栏
+selected_nav = st.radio(
+    "Nav", 
+    menu_icons, 
+    horizontal=True, 
+    label_visibility="collapsed"
+)
+
+st.divider() # 视觉分割线
+
+# 1. Workbench (工作台)
+if "客户开发" in selected_nav:
+    st.markdown("### 🚀 智能获客工作台")
+    st.caption("AI 驱动的供应链客户挖掘系统 | v51.0 Mobile Optimized")
     
     with st.expander("📂 导入数据 (Excel/CSV)", expanded=st.session_state['results'] is None):
         up_file = st.file_uploader("选择文件", type=['xlsx', 'csv'])
@@ -413,11 +437,11 @@ if "Workbench" in str(menu):
                 else: df = pd.read_excel(up_file, header=None)
                 df = df.astype(str)
                 c1, c2 = st.columns(2)
-                with c1: s_col = st.selectbox("选择【店铺名称】列", range(len(df.columns)), 1)
-                with c2: l_col = st.selectbox("选择【店铺链接】列 (AI分析用)", range(len(df.columns)), 0)
+                with c1: s_col = st.selectbox("【店铺名称】列", range(len(df.columns)), 1)
+                with c2: l_col = st.selectbox("【店铺链接】列", range(len(df.columns)), 0)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🚀 启动 AI 引擎 (Start Engine)"):
+                if st.button("🚀 启动 AI 引擎"):
                     client = OpenAI(api_key=OPENAI_KEY)
                     
                     raw_phones = set()
@@ -443,7 +467,7 @@ if "Workbench" in str(menu):
                         
                     final_data = []
                     processed_rows = set()
-                    st.info(f"🧠 AI 正在深度分析 {len(valid_phones)} 个潜在客户的选品策略...")
+                    st.info(f"🧠 AI 正在分析 {len(valid_phones)} 个潜在客户...")
                     ai_bar = st.progress(0)
                     
                     for idx, p in enumerate(valid_phones):
@@ -464,38 +488,36 @@ if "Workbench" in str(menu):
                     
                     st.session_state['results'] = final_data
                     save_leads_to_db(st.session_state['username'], final_data)
-                    st.success(f"✅ 完成！生成 {len(final_data)} 条高潜线索")
+                    st.success(f"✅ 生成 {len(final_data)} 条线索")
                     st.rerun()
             except Exception as e: st.error(f"Error: {e}")
 
     # Results
     if st.session_state['results']:
-        c_act1, c_act2 = st.columns([3, 1])
-        with c_act1: st.markdown(f"### 🎯 推荐客户 ({len(st.session_state['results'])})")
+        c_act1, c_act2 = st.columns([2, 1])
+        with c_act1: st.markdown(f"#### 🎯 推荐客户 ({len(st.session_state['results'])})")
         with c_act2: 
-            if st.button("🗑️ 清空结果"): st.session_state['results'] = None; st.session_state['unlocked_leads'] = set(); st.rerun()
+            if st.button("🗑️ 清空"): st.session_state['results'] = None; st.session_state['unlocked_leads'] = set(); st.rerun()
 
         for i, item in enumerate(st.session_state['results']):
-            with st.expander(f"🏢 {item['Shop']} (+{item['Phone']})"):
-                if "AI Connection Error" in item['Msg']:
-                    st.error(item['Msg'])
-                else:
-                    st.info(item['Msg'])
+            with st.expander(f"🏢 {item['Shop']}"):
+                st.caption(f"Phone: +{item['Phone']}")
+                if "AI Connection Error" in item['Msg']: st.error(item['Msg'])
+                else: st.info(item['Msg'])
                 
                 lead_id = f"{item['Phone']}_{i}"
                 if lead_id in st.session_state['unlocked_leads']:
-                    c1, c2 = st.columns(2)
-                    with c1: st.markdown(f'<a href="{item["WA"]}" target="_blank" class="btn-action wa-green">🟢 打开 WhatsApp</a>', unsafe_allow_html=True)
-                    with c2: st.markdown(f'<a href="{item["TG"]}" target="_blank" class="btn-action tg-blue">🔵 打开 Telegram</a>', unsafe_allow_html=True)
+                    st.markdown(f'<a href="{item["WA"]}" target="_blank" class="btn-action wa-green">WhatsApp</a>', unsafe_allow_html=True)
+                    st.markdown(f'<a href="{item["TG"]}" target="_blank" class="btn-action tg-blue">Telegram</a>', unsafe_allow_html=True)
                 else:
-                    if st.button(f"👆 解锁联系方式 (Unlock)", key=f"ul_{i}"):
+                    if st.button(f"👆 解锁联系方式", key=f"ul_{i}"):
                         log_click_event(st.session_state['username'], item['Shop'], item['Phone'], 'unlock')
                         st.session_state['unlocked_leads'].add(lead_id)
                         st.rerun()
 
-# 2. History
-elif "History" in str(menu):
-    st.title("📂 我的历史记录")
+# 2. History (历史记录)
+elif "历史记录" in selected_nav:
+    st.markdown("### 📂 我的历史记录")
     df_leads = get_user_leads_history(st.session_state['username'])
     if not df_leads.empty:
         st.dataframe(df_leads[['created_at', 'shop_name', 'phone', 'ai_message']], use_container_width=True)
@@ -503,28 +525,30 @@ elif "History" in str(menu):
         st.download_button("📥 导出 CSV", csv, "my_leads.csv", "text/csv")
     else: st.info("暂无记录")
 
-# 3. Admin
-elif "Admin" in str(menu) and st.session_state['role'] == 'admin':
-    st.title("📊 管理后台")
+# 3. Admin (管理后台) - 仅管理员可见
+elif "管理后台" in selected_nav and st.session_state['role'] == 'admin':
+    st.markdown("### 📊 管理后台")
     df_clicks, df_leads = get_admin_stats()
     if not df_clicks.empty:
         k1, k2 = st.columns(2)
-        k1.metric("全网抓取线索", len(df_leads))
-        k2.metric("业务员跟进数", len(df_clicks))
+        k1.metric("总线索", len(df_leads))
+        k2.metric("总跟进", len(df_clicks))
+        
         st.subheader("🏆 销冠排行榜")
         lb = df_clicks['username'].value_counts().reset_index()
         lb.columns=['业务员', '解锁次数']
         st.bar_chart(lb.set_index('业务员'))
-        with st.expander("📝 详细日志"): st.dataframe(df_clicks)
+        
+        with st.expander("📝 详细操作日志"): 
+            st.dataframe(df_clicks, use_container_width=True)
     else: st.info("暂无数据")
     
-    st.divider()
+    st.markdown("---")
     with st.form("new_user"):
         st.subheader("添加员工账号")
-        c1, c2, c3 = st.columns(3)
-        u = c1.text_input("用户名")
-        p = c2.text_input("密码", type="password")
-        n = c3.text_input("真实姓名")
+        u = st.text_input("用户名")
+        p = st.text_input("密码", type="password")
+        n = st.text_input("真实姓名")
         if st.form_submit_button("创建账号"):
             if create_user(u, p, n): st.success("创建成功")
             else: st.error("创建失败")
