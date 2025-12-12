@@ -26,9 +26,9 @@ CONFIG = {
 }
 
 # ==========================================
-# 💾 数据库核心 (保留CRM功能)
+# 💾 数据库核心
 # ==========================================
-DB_FILE = "crm_988_v6.db" # 升级版本号，确保结构最新
+DB_FILE = "crm_988_v7.db" # 升级版本号
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -37,7 +37,6 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, filename TEXT, total_leads INTEGER, verified_wa INTEGER, timestamp DATETIME, csv_data BLOB)''')
     c.execute('''CREATE TABLE IF NOT EXISTS actions (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, shop_name TEXT, action_type TEXT, timestamp DATETIME)''')
     
-    # 默认管理员
     c.execute("SELECT * FROM users WHERE username='admin'")
     if not c.fetchone():
         pwd = hashlib.sha256("admin123".encode()).hexdigest()
@@ -99,116 +98,51 @@ def get_history_file(rid):
 init_db()
 
 # ==========================================
-# 🎨 蓝宝石 UI (Sapphire Theme)
+# 🎨 UI Style
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="🚛")
 
 st.markdown("""
 <style>
-    /* 全局字体 */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    html, body, [class*="css"] {font-family: 'Inter', sans-serif; background-color: #f0f2f6;}
     
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
-        background-color: #f0f2f6; /* 高级灰背景 */
-    }
-    
-    /* 隐藏 Streamlit 默认元素 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     
-    /* 侧边栏美化 */
-    section[data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 1px solid #e5e7eb;
-    }
+    section[data-testid="stSidebar"] {background-color: #ffffff; border-right: 1px solid #e5e7eb;}
     
-    /* 登录框卡片 */
-    .login-container {
-        background: white;
-        padding: 3rem;
-        border-radius: 16px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.05);
-        text-align: center;
-        margin-top: 5vh;
-        border: 1px solid #f1f5f9;
-    }
-    
-    /* 主按钮 */
     div.stButton > button {
-        background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%); /* 蓝宝石渐变 */
-        color: white;
-        border: none;
-        padding: 0.6rem 1.5rem;
-        border-radius: 8px;
-        font-weight: 600;
-        font-size: 15px;
-        box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
-        width: 100%;
-        transition: all 0.3s;
+        background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+        color: white; border: none; padding: 0.6rem 1.5rem; border-radius: 8px; font-weight: 600;
+        box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2); width: 100%;
     }
-    div.stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 12px rgba(37, 99, 235, 0.3);
-    }
+    div.stButton > button:hover {transform: translateY(-2px);}
     
-    /* 结果卡片 */
     div[data-testid="stExpander"] {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        margin-bottom: 10px;
-        transition: box-shadow 0.2s;
-    }
-    div[data-testid="stExpander"]:hover {
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        border-color: #cbd5e1;
+        background: white; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 10px;
     }
     
-    /* HTML 按钮样式 (稳定版) */
+    /* HTML Buttons */
     .btn-action {
-        display: block;
-        padding: 8px 12px;
-        color: white !important;
-        text-decoration: none !important;
-        border-radius: 6px;
-        font-weight: 500;
-        text-align: center;
-        font-size: 14px;
-        margin-bottom: 4px;
-        transition: opacity 0.2s;
+        display: block; padding: 8px 12px; color: white !important; text-decoration: none !important;
+        border-radius: 6px; font-weight: 500; text-align: center; font-size: 14px; margin-bottom: 4px;
     }
-    .btn-action:hover { opacity: 0.9; }
-    .wa-green { background-color: #10b981; } /* Emerald Green */
-    .wa-yellow { background-color: #f59e0b; color: white !important; } /* Amber */
-    .tg-blue { background-color: #0ea5e9; } /* Sky Blue */
-    
-    /* 标题样式 */
-    h1, h2, h3 {
-        color: #1e293b;
-        font-weight: 700;
-    }
+    .wa-green { background-color: #10b981; } 
+    .tg-blue { background-color: #0ea5e9; } 
 </style>
 """, unsafe_allow_html=True)
 
-# === 核心逻辑 (采用你提供的正则) ===
+# === Core Logic ===
 
 def extract_all_numbers(row_series):
-    """
-    用户指定的筛选逻辑
-    """
     full_text = " ".join([str(val) for val in row_series if pd.notna(val)])
-    # 模式A: +7 或 8 开头的11位
-    matches_standard = re.findall(r'(\+?(?:7|8)(?:[\s\-\(\)]*\d){10})', full_text)
-    # 模式B: 9 开头的10位
-    matches_short = re.findall(r'(?:\D|^)(9(?:[\s\-\(\)]*\d){9})(?:\D|$)', full_text)
-    all_raw_matches = matches_standard + matches_short
-    
+    # v32 强力提取逻辑
+    broad_matches = re.findall(r'(?:^|\D)([789][\d\s\-\(\)]{9,16})(?:\D|$)', full_text)
     candidates = []
-    for raw in all_raw_matches:
-        if isinstance(raw, tuple): raw = raw[0]
-        digits = re.sub(r'\D', '', str(raw))
+    for raw in broad_matches:
+        digits = re.sub(r'\D', '', raw)
         clean_num = None
         if len(digits) == 11:
             if digits.startswith('7'): clean_num = digits
@@ -216,11 +150,17 @@ def extract_all_numbers(row_series):
         elif len(digits) == 10 and digits.startswith('9'):
             clean_num = '7' + digits
         if clean_num: candidates.append(clean_num)
+    
+    # 补漏纯数字
+    digits_only = re.findall(r'(?:^|\D)([789]\d{9,10})(?:\D|$)', full_text)
+    for raw in digits_only:
+        if len(raw) == 11 and raw.startswith('7'): candidates.append(raw)
+        elif len(raw) == 11 and raw.startswith('8'): candidates.append('7' + raw[1:])
+        elif len(raw) == 10 and raw.startswith('9'): candidates.append('7' + raw)
+        
     return list(set(candidates))
 
-def get_proxy_config():
-    # 演示用，实际可读 secrets
-    return None
+def get_proxy_config(): return None
 
 def extract_web_content(url):
     if not url or "http" not in str(url): return None
@@ -240,14 +180,13 @@ def process_checknumber_task(phone_list, api_key, user_id):
     status_map = {p: 'unknown' for p in phone_list}
     headers = {"X-API-Key": api_key, "User-Agent": "Mozilla/5.0"}
     
-    with st.status("📡 Cloud Verification in progress...", expanded=True) as status:
-        status.write(f"Uploading {len(phone_list)} numbers...")
+    with st.status("📡 API Verification...", expanded=True) as status:
+        status.write(f"Checking {len(phone_list)} numbers...")
         try:
             files = {'file': ('input.txt', "\n".join(phone_list), 'text/plain')}
             resp = requests.post(CONFIG["CN_BASE_URL"], headers=headers, files=files, data={'user_id': user_id}, timeout=30, verify=False)
             if resp.status_code != 200: 
-                status.update(label=f"⚠️ API Error (Using raw extraction)", state="error")
-                return status_map 
+                status.update(label=f"⚠️ API Error {resp.status_code}", state="error"); return status_map
             task_id = resp.json().get("task_id")
         except: return status_map
 
@@ -262,7 +201,7 @@ def process_checknumber_task(phone_list, api_key, user_id):
             except: pass
         
         if not result_url: 
-            status.update(label="⚠️ Verification Timeout", state="error"); return status_map
+            status.update(label="⚠️ Timeout", state="error"); return status_map
             
         try:
             f = requests.get(result_url, verify=False)
@@ -279,7 +218,7 @@ def process_checknumber_task(phone_list, api_key, user_id):
                         cnt += 1
                     else:
                         status_map[nm] = 'invalid'
-                status.update(label=f"✅ Verified: {cnt} valid numbers", state="complete")
+                status.update(label=f"✅ Verified: {cnt} valid numbers.", state="complete")
         except: pass
     return status_map
 
@@ -305,42 +244,29 @@ def make_wa_link(phone, text):
     return f"https://wa.me/{phone}?text={urllib.parse.quote(text)}"
 
 # ==========================================
-# 🔐 登录界面 (美化版)
+# 🔐 Login & Main
 # ==========================================
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 
 if not st.session_state['logged_in']:
-    c1, c2, c3 = st.columns([1,2,1]) # 调整布局居中
+    c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.markdown("<div style='height: 5vh;'></div>", unsafe_allow_html=True) # 占位
-        
-        # 登录卡片容器
+        st.markdown("<div style='height:5vh;'></div>", unsafe_allow_html=True)
         with st.container():
-            if os.path.exists("logo.png"): 
-                st.image("logo.png", width=200)
-            else:
-                st.markdown("## 🚛 988 Group CRM")
-                
+            if os.path.exists("logo.png"): st.image("logo.png", width=200)
+            else: st.markdown("## 🚛 988 Group CRM")
             st.markdown("#### Login to Workspace")
-            
             with st.form("login_form"):
-                u = st.text_input("Username")
-                p = st.text_input("Password", type="password")
-                st.markdown("<br>", unsafe_allow_html=True)
+                u = st.text_input("Username"); p = st.text_input("Password", type="password")
                 if st.form_submit_button("Sign In"):
                     user = login_user(u, p)
                     if user:
                         st.session_state.update({'logged_in':True, 'username':u, 'role':user[0], 'real_name':user[1]})
                         st.rerun()
-                    else:
-                        st.error("Invalid credentials")
+                    else: st.error("Invalid credentials")
     st.stop()
 
-# ==========================================
-# 🏢 系统主界面
-# ==========================================
-
-# 读取 Secrets
+# --- Internal ---
 try:
     CN_USER = st.secrets["CN_USER_ID"]
     CN_KEY = st.secrets["CN_API_KEY"]
@@ -351,16 +277,13 @@ except:
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", width=180)
     st.markdown(f"**Hi, {st.session_state['real_name']}**")
-    
     menu = st.radio("Navigation", ["🚀 WorkBench", "📂 History", "📊 Admin"] if st.session_state['role']=='admin' else ["🚀 WorkBench", "📂 History"])
-    
-    st.markdown("---")
+    st.divider()
     if st.button("Logout", type="secondary"): st.session_state['logged_in']=False; st.rerun()
 
 # 1. WorkBench
 if "WorkBench" in str(menu):
     st.title("🚀 Acquisition Workbench")
-    st.caption("Upload leads -> AI Analysis -> Contact")
     
     with st.expander("📂 Import Data", expanded=True):
         up_file = st.file_uploader("Select Excel/CSV File", type=['xlsx', 'csv'])
@@ -397,13 +320,21 @@ if "WorkBench" in str(menu):
             # 2. 验号
             status_map = process_checknumber_task(list(raw_phones), CN_KEY, CN_USER)
             
-            # 3. 生成
+            # 3. 生成 (严格过滤：只处理 Valid)
             final_data = []
-            phones_list = sorted(list(raw_phones))
+            valid_phones = [p for p in raw_phones if status_map.get(p) == 'valid']
+            
+            if not valid_phones:
+                st.warning(f"Extracted {len(raw_phones)} numbers, but NONE were valid WhatsApp.")
+                st.stop()
+                
             processed_rows = set()
             
+            st.info(f"🧠 Generating messages for {len(valid_phones)} verified leads...")
             ai_bar = st.progress(0)
-            for idx, p in enumerate(phones_list):
+            
+            # 只遍历有效号码
+            for idx, p in enumerate(valid_phones):
                 indices = row_map[p]
                 for rid in indices:
                     if rid in processed_rows: continue
@@ -416,20 +347,18 @@ if "WorkBench" in str(menu):
                     msg = get_ai_message(client, s_name, s_link, extract_web_content(s_link), st.session_state['real_name'])
                     wa_link = make_wa_link(p, msg)
                     tg_link = f"https://t.me/+{p}"
-                    status = status_map.get(p, 'unknown')
                     
                     final_data.append({
                         "Shop": s_name, "Phone": p, "Msg": msg,
-                        "WA": wa_link, "TG": tg_link, "Status": status
+                        "WA": wa_link, "TG": tg_link
                     })
-                ai_bar.progress((idx+1)/len(phones_list))
+                ai_bar.progress((idx+1)/len(valid_phones))
             
             # 存档
-            valid_count = sum(1 for v in status_map.values() if v == 'valid')
-            save_history(st.session_state['username'], up_file.name, len(raw_phones), valid_count, pd.DataFrame(final_data))
+            save_history(st.session_state['username'], up_file.name, len(raw_phones), len(valid_phones), pd.DataFrame(final_data))
             
             # 展示
-            st.success(f"✅ Processing Done! {len(final_data)} leads generated.")
+            st.success(f"✅ Processing Done! {len(final_data)} VALID leads ready.")
             
             for i, item in enumerate(final_data):
                 with st.expander(f"🏢 {item['Shop']} (+{item['Phone']})"):
@@ -438,10 +367,8 @@ if "WorkBench" in str(menu):
                     c1, c2, c3 = st.columns([2, 2, 1])
                     
                     with c1:
-                        if item['Status'] == 'valid':
-                            st.markdown(f'<a href="{item["WA"]}" target="_blank" class="btn-action wa-green">🟢 WhatsApp (Verified)</a>', unsafe_allow_html=True)
-                        else:
-                            st.markdown(f'<a href="{item["WA"]}" target="_blank" class="btn-action wa-yellow">⚠️ WhatsApp (Unverified)</a>', unsafe_allow_html=True)
+                        # 只有这一种绿色按钮了
+                        st.markdown(f'<a href="{item["WA"]}" target="_blank" class="btn-action wa-green">🟢 WhatsApp (Verified)</a>', unsafe_allow_html=True)
                     with c2:
                         st.markdown(f'<a href="{item["TG"]}" target="_blank" class="btn-action tg-blue">🔵 Telegram</a>', unsafe_allow_html=True)
                     with c3:
@@ -461,7 +388,7 @@ elif "History" in str(menu):
                 c2.metric("Verified WA", row['verified_wa'])
                 file_data = get_history_file(row['id'])
                 if file_data: st.download_button("📥 Download CSV", file_data[0], f"hist_{row['id']}.csv", "text/csv")
-    else: st.info("No records found.")
+    else: st.info("No records.")
 
 # 3. Admin
 elif "Admin" in str(menu):
