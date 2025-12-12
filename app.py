@@ -41,16 +41,13 @@ st.markdown("""
     section[data-testid="stSidebar"] {background-color: #f4f6f9; border-right: 1px solid #e0e0e0;}
     h1 {color: #003366; font-weight: 700;}
     
-    /* 按钮样式优化 */
+    /* 按钮优化 */
     div.stButton > button {
         border-radius: 6px; font-weight: 600; width: 100%;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
-    
-    /* 结果卡片 */
     div[data-testid="stExpander"] {
-        background: white; border: 1px solid #edf2f7; border-radius: 8px; 
-        margin-bottom: 8px;
+        background: white; border: 1px solid #edf2f7; border-radius: 8px; margin-bottom: 8px;
     }
     a {text-decoration: none;}
 </style>
@@ -64,7 +61,7 @@ with st.sidebar:
         st.markdown("## 🚛 **988 Group**")
         
     st.markdown("### Omni-Channel Acquisition")
-    st.caption("v24.0: Stable Release")
+    st.caption("v25.0: Stable Core")
     
     try:
         default_cn_user = st.secrets["CN_USER_ID"]
@@ -84,7 +81,7 @@ with st.sidebar:
         check_key = st.text_input("CN Key", value=default_cn_key, type="password")
         openai_key = st.text_input("OpenAI Key", value=default_openai, type="password")
 
-# === 核心功能 ===
+# === 核心函数 ===
 
 def get_proxy_config():
     if use_proxy and proxy_port: return proxy_port.strip()
@@ -317,7 +314,7 @@ if uploaded_file:
             
         st.subheader("🎯 Dual-Channel Leads")
         
-        # === 核心修复点：为每个按钮添加唯一的 key ===
+        # === 核心修复：移除不稳定的 use_container_width 参数 ===
         for i, item in enumerate(final_results):
             with st.expander(f"🏢 {item['Shop Name']} (+{item['Phone']})"):
                 st.write(f"**Draft:** {item['AI Message']}")
@@ -325,12 +322,17 @@ if uploaded_file:
                 c_wa, c_tg = st.columns(2)
                 
                 with c_wa:
-                    # 使用 enumerate 的索引 i 来保证 key 唯一
                     if item['WA_Link']:
-                        st.link_button(f"🟢 WhatsApp", item['WA_Link'], use_container_width=True, key=f"wa_{i}")
+                        # 移除 use_container_width
+                        st.link_button(f"🟢 WhatsApp", item['WA_Link'], key=f"wa_{i}")
                     else:
-                        st.button(f"⚪ No WhatsApp", disabled=True, use_container_width=True, key=f"nowa_{i}")
+                        st.button(f"⚪ No WhatsApp", disabled=True, key=f"nowa_{i}")
                 
                 with c_tg:
-                    st.link_button(f"🔵 Telegram", item['TG_Link'], use_container_width=True, key=f"tg_{i}")
-                    st.caption("Copy text above first")
+                    try:
+                        # 增加 try-catch 保护
+                        st.link_button(f"🔵 Telegram", item['TG_Link'], key=f"tg_{i}")
+                    except Exception as e:
+                        st.error("Link Error")
+                    
+                    st.caption("Copy text first")
