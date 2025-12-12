@@ -96,151 +96,148 @@ def get_user_leads_history(username):
     except: return pd.DataFrame()
 
 # ==========================================
-# 🎨 赛博黑金·全域修复版 UI (v51.0)
+# 🎨 UI 主题：深空灰·专业版 (Deep Space Pro)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="🚛")
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
     
-    /* === 1. 背景 === */
+    /* === 1. 全局背景 (纯净深灰，去除去渐变动画) === */
     .stApp {
-        background: linear-gradient(135deg, #020024 0%, #090979 35%, #00d4ff 100%);
-        background-size: 400% 400%;
-        animation: gradientBG 15s ease infinite;
+        background-color: #121212 !important;
         font-family: 'Inter', sans-serif;
-    }
-    @keyframes gradientBG {
-        0% {background-position: 0% 50%;}
-        50% {background-position: 100% 50%;}
-        100% {background-position: 0% 50%;}
     }
     
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     
-    /* === 2. 侧边栏 === */
+    /* === 2. 侧边栏 (稍亮一点的灰色) === */
     section[data-testid="stSidebar"] {
-        background-color: #000000 !important;
-        border-right: 1px solid rgba(255, 255, 255, 0.15);
+        background-color: #181818 !important;
+        border-right: 1px solid #333333;
     }
-    section[data-testid="stSidebar"] h1, h2, h3, p, span, div {
-        color: #ffffff !important;
+    section[data-testid="stSidebar"] h1, h2, h3, p, span, div, label {
+        color: #cccccc !important;
     }
     
-    /* === 3. 卡片与容器 === */
+    /* === 3. 卡片与容器 (表单、Expander) === */
     div[data-testid="stExpander"], div[data-testid="stForm"], .login-card {
-        background-color: #0f172a !important;
-        border: 1px solid rgba(56, 189, 248, 0.3);
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        background-color: #1e1e1e !important; /* VS Code 编辑器背景色 */
+        border: 1px solid #333333 !important;
+        border-radius: 6px;
+        box-shadow: none !important; /* 去除阴影，扁平化 */
         margin-bottom: 16px;
-        color: white !important;
+        color: #e0e0e0 !important;
     }
     
-    /* 文字颜色强制修正 */
-    p, span, div, li, label {
-        color: #ffffff !important;
-        font-weight: 500;
-    }
-    h1, h2, h3, h4, strong {
-        color: #38bdf8 !important;
-        font-weight: 800 !important;
-    }
+    /* === 4. 文字颜色体系 === */
+    h1, h2, h3 { color: #ffffff !important; font-weight: 600 !important; }
+    h4, h5, h6, strong { color: #58a6ff !important; } /* 重点文字用蓝色 */
+    p, div, span, label, li { color: #bbbbbb !important; }
+    .stCaption { color: #888888 !important; }
+
+    /* === 5. 按钮重构 (扁平化设计) === */
     
-    /* === 4. 按钮全域修复 (关键修改) === */
-    
-    /* 通用按钮规则 (覆盖所有按钮，包括上传、下载、提交) */
+    /* 通用按钮规则 */
     button {
         color: #ffffff !important;
     }
-    
-    /* Streamlit 主按钮 & 下载按钮 & 表单提交按钮 */
+
+    /* 主按钮 (Primary) - 沉稳的蓝色 */
     div.stButton > button, div.stDownloadButton > button, .stFormSubmitButton > button {
-        background-color: #2563eb !important; /* 强制深蓝底色 */
-        background-image: linear-gradient(135deg, #2563eb, #0ea5e9) !important;
-        border: 1px solid #60a5fa !important;
-        padding: 0.75rem 1.5rem;
+        background-color: #0078d4 !important; 
+        color: white !important;
+        border: 1px solid #0078d4 !important;
+        border-radius: 4px;
+        padding: 0.6rem 1.2rem;
+        font-weight: 500;
+        transition: all 0.2s;
+        box-shadow: none !important;
+    }
+    
+    div.stButton > button:hover, .stFormSubmitButton > button:hover {
+        background-color: #006cc1 !important;
+        border-color: #66b5ff !important;
+    }
+    
+    /* === 6. 输入框与下拉菜单 (Input/Select) === */
+    div[data-baseweb="input"], div[data-baseweb="select"] {
+        background-color: #252526 !important; /* 输入框背景深灰 */
+        border: 1px solid #3c3c3c !important;
+        border-radius: 4px;
+    }
+    div[data-baseweb="input"] input, div[data-baseweb="select"] div {
+        color: #cccccc !important;
+    }
+    /* 聚焦时的高亮边框 */
+    div[data-baseweb="input"]:focus-within, div[data-baseweb="select"]:focus-within {
+        border-color: #0078d4 !important;
+    }
+
+    /* === 7. 文件上传组件 (File Uploader) === */
+    [data-testid="stFileUploader"] {
+        padding: 20px;
+        border: 1px dashed #444;
         border-radius: 8px;
-        font-weight: 700;
-        text-transform: uppercase;
-        box-shadow: 0 4px 0 #1e40af !important;
-        transition: all 0.1s;
+        background-color: #1e1e1e;
     }
-    
-    div.stButton > button:hover, div.stDownloadButton > button:hover, .stFormSubmitButton > button:hover {
-        background-image: linear-gradient(135deg, #3b82f6, #38bdf8) !important;
-        transform: translateY(2px);
-        box-shadow: 0 2px 0 #1e40af !important;
+    [data-testid="stFileUploader"] section {
+        background-color: #1e1e1e !important;
     }
-    
-    /* === 5. 文件上传按钮 (File Uploader) 专项修复 === */
-    /* 针对 "Browse files" 按钮 */
     [data-testid="stFileUploader"] button {
-        background-color: #1e293b !important; /* 深色背景 */
-        color: #ffffff !important;
-        border: 1px solid #38bdf8 !important;
-    }
-    [data-testid="stFileUploader"] button:hover {
-        background-color: #334155 !important;
-        border-color: #ffffff !important;
+        background-color: #2d2d2d !important;
+        border: 1px solid #555 !important;
+        color: #fff !important;
     }
     /* 针对 "Drag and drop file here" 区域 */
-    [data-testid="stFileUploader"] {
-        color: #ffffff !important;
-    }
     [data-testid="stFileUploader"] div {
-        color: #e2e8f0 !important;
+        color: #bbbbbb !important;
     }
-    
-    /* === 6. HTML 链接按钮 === */
+
+    /* === 8. 数据表格 (Dataframe) === */
+    div[data-testid="stDataFrame"] {
+        border: 1px solid #333;
+    }
+
+    /* === 9. 状态组件 (Status/Metrics) === */
+    div[data-testid="stStatusWidget"] {
+        background-color: #1e1e1e !important;
+        border: 1px solid #333 !important;
+    }
+    div[data-testid="stMetricValue"] {
+        color: #4ec9b0 !important; /* 护眼的青绿色 */
+    }
+
+    /* === 10. 自定义链接按钮 (WhatsApp/TG) === */
     .btn-action {
         display: block !important;
         width: 100% !important;
-        padding: 12px !important;
+        padding: 10px !important;
         color: #ffffff !important;
         text-decoration: none !important;
-        border-radius: 8px;
-        font-weight: 700 !important;
+        border-radius: 4px;
+        font-weight: 500 !important;
         text-align: center;
         margin-top: 8px;
-        border: 1px solid rgba(255,255,255,0.2);
+        font-size: 14px;
+        transition: opacity 0.2s;
     }
     .wa-green { 
-        background-color: #047857 !important;
-        border-bottom: 4px solid #064e3b !important;
+        background-color: #128c7e !important; /* WhatsApp 官方绿 */
+        border: 1px solid #128c7e !important;
     }
-    .wa-green:hover { 
-        background-color: #10b981 !important;
-        transform: translateY(2px);
-        border-bottom: 2px solid #064e3b !important;
-    }
+    .wa-green:hover { opacity: 0.9; }
+    
     .tg-blue { 
-        background-color: #0369a1 !important;
-        border-bottom: 4px solid #075985 !important;
+        background-color: #229ED9 !important; /* Telegram 官方蓝 */
+        border: 1px solid #229ED9 !important;
     } 
-    .tg-blue:hover { 
-        background-color: #0ea5e9 !important;
-        transform: translateY(2px);
-        border-bottom: 2px solid #075985 !important;
-    }
+    .tg-blue:hover { opacity: 0.9; }
+
+    /* 分割线颜色 */
+    hr { border-color: #333 !important; }
     
-    /* === 7. 输入框与下拉菜单 === */
-    div[data-baseweb="input"], div[data-baseweb="select"] {
-        background-color: #1e293b !important;
-        border: 1px solid #475569 !important;
-        color: white !important;
-        border-radius: 6px;
-    }
-    input { color: white !important; }
-    
-    /* 状态提示 */
-    div[data-testid="stStatusWidget"] {
-        background-color: #0f172a; border: 1px solid #38bdf8;
-    }
-    div[data-testid="stMetricValue"] {
-        color: #facc15 !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
