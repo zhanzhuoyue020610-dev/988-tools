@@ -22,74 +22,159 @@ CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks"
 }
 
-# 1. 页面配置
+# 1. 页面配置 (Page Config)
 st.set_page_config(
-    page_title="988 Group - Intelligent System", 
+    page_title="988 Group CRM", 
     layout="wide", 
     page_icon="🚛",
     initial_sidebar_state="expanded"
 )
 
-# 2. UI 美化 (保持 v21 的高级感)
+# 2. 高级 CSS 注入 (铂金版 UI)
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
-    html, body, [class*="css"] {font-family: 'Inter', sans-serif;}
+    /* 引入高级字体 Inter */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+        background-color: #f8f9fc; /* 极淡的灰蓝色背景 */
+    }
+    
+    /* 隐藏默认组件 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    section[data-testid="stSidebar"] {background-color: #f4f6f9; border-right: 1px solid #e0e0e0;}
-    h1 {color: #003366; font-weight: 700; letter-spacing: -1px;}
+    
+    /* 侧边栏美化 */
+    section[data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #ebedf0;
+        box-shadow: 2px 0 12px rgba(0,0,0,0.02);
+    }
+    
+    /* 标题样式 */
+    h1 {
+        color: #0f172a;
+        font-weight: 800;
+        letter-spacing: -0.5px;
+        margin-bottom: 0.5rem;
+    }
+    h3 {
+        color: #334155;
+        font-weight: 600;
+    }
+    
+    /* 核心按钮：988 品牌渐变蓝 */
     div.stButton > button {
-        background: linear-gradient(135deg, #004aad 0%, #003366 100%);
-        color: white; border: none; padding: 0.6rem 1.2rem; border-radius: 8px; 
-        font-weight: 600; transition: all 0.3s ease; box-shadow: 0 4px 6px rgba(0, 74, 173, 0.2); width: 100%;
+        background: linear-gradient(135deg, #0052cc 0%, #003366 100%);
+        color: white;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 10px;
+        font-weight: 600;
+        font-size: 16px;
+        letter-spacing: 0.5px;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(0, 82, 204, 0.2);
+        width: 100%;
+        text-transform: uppercase;
     }
-    div.stButton > button:hover {transform: translateY(-2px); box-shadow: 0 6px 12px rgba(0, 74, 173, 0.3);}
+    div.stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(0, 82, 204, 0.3);
+        background: linear-gradient(135deg, #0066ff 0%, #004080 100%);
+    }
+    div.stButton > button:active {
+        transform: translateY(0);
+    }
+
+    /* 结果卡片美化 */
     div[data-testid="stExpander"] {
-        background: white; border: 1px solid #edf2f7; border-radius: 12px; 
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); margin-bottom: 12px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        margin-bottom: 12px;
+        transition: all 0.2s ease;
     }
-    div[data-testid="stStatusWidget"] {border-radius: 10px; border: 1px solid #e2e8f0;}
+    div[data-testid="stExpander"]:hover {
+        border-color: #0052cc;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+    }
+    
+    /* 输入框优化 */
+    div[data-baseweb="input"] {
+        border-radius: 8px;
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+    }
+    
+    /* 指标卡片 (Metrics) */
+    div[data-testid="stMetricValue"] {
+        font-size: 28px;
+        font-weight: 700;
+        color: #0052cc;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-weight: 500;
+        color: #64748b;
+    }
+    
+    /* 进度条颜色 */
+    .stProgress > div > div > div > div {
+        background-color: #0052cc;
+    }
+    
+    /* 链接按钮修正 */
+    a { text-decoration: none; }
 </style>
 """, unsafe_allow_html=True)
 
 # === 侧边栏 ===
 with st.sidebar:
     if os.path.exists("logo.png"):
-        st.image("logo.png", width=180)
+        st.image("logo.png", width=200)
     else:
-        st.markdown("## 🚛 **988 Group**")
+        st.markdown("# 🚛 **988 Group**")
         
-    st.markdown("---")
-    st.markdown("### 📊 Control Panel")
+    st.markdown("### **Intelligent Sourcing CRM**")
+    st.caption("v27.0 Platinum Edition ✨")
     
+    st.markdown("---")
+    
+    # 密钥读取
     try:
         default_cn_user = st.secrets["CN_USER_ID"]
         default_cn_key = st.secrets["CN_API_KEY"]
         default_openai = st.secrets["OPENAI_KEY"]
-        st.caption("✅ Cloud Secrets Loaded")
+        status_color = "🟢"
+        status_text = "Cloud Connected"
     except FileNotFoundError:
         default_cn_user = ""
         default_cn_key = ""
         default_openai = ""
-        st.caption("⚠️ Local Mode")
+        status_color = "🟠"
+        status_text = "Local Mode"
 
-    with st.expander("🔧 System Config"):
+    # 用 Info 框展示状态，更有科技感
+    st.info(f"{status_color} System Status: **{status_text}**")
+
+    with st.expander("🔧 Developer Settings"):
         use_proxy = st.checkbox("Enable Proxy", value=False)
         proxy_port = st.text_input("Proxy URL", value="http://127.0.0.1:10809")
         check_user_id = st.text_input("CN User ID", value=default_cn_user)
         check_key = st.text_input("CN Key", value=default_cn_key, type="password")
         openai_key = st.text_input("OpenAI Key", value=default_openai, type="password")
 
-# === 核心功能 ===
+# === 核心功能 (保持 v22 逻辑不变) ===
 
 def get_proxy_config():
     if use_proxy and proxy_port: return proxy_port.strip()
     return None
 
 def extract_web_content(url):
-    """爬虫模块：获取标题和描述"""
+    """爬虫模块"""
     if not url or not isinstance(url, str) or "http" not in url: return None
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -110,12 +195,9 @@ def extract_web_content(url):
 def extract_all_numbers(row_series):
     """提取 7/8/9 开头的号码"""
     full_text = " ".join([str(val) for val in row_series if pd.notna(val)])
-    # 模式A: +7 或 8 开头的11位
     matches_standard = re.findall(r'(\+?(?:7|8)(?:[\s\-\(\)]*\d){10})', full_text)
-    # 模式B: 9 开头的10位
     matches_short = re.findall(r'(?:\D|^)(9(?:[\s\-\(\)]*\d){9})(?:\D|$)', full_text)
     all_raw_matches = matches_standard + matches_short
-    
     candidates = []
     for raw in all_raw_matches:
         if isinstance(raw, tuple): raw = raw[0]
@@ -132,72 +214,68 @@ def extract_all_numbers(row_series):
 def process_checknumber_task(phone_list):
     if not phone_list: return set()
     valid_numbers_set = set()
-    
     api_key = check_key.strip()
     user_id = check_user_id.strip()
-    if not api_key or not user_id: st.error("配置缺失"); return set()
+    if not api_key or not user_id: st.error("Configuration Missing"); return set()
 
     headers = {"X-API-Key": api_key, "User-Agent": "Mozilla/5.0"}
     my_proxy_str = get_proxy_config()
     req_proxies = {"http": my_proxy_str, "https": my_proxy_str} if my_proxy_str else None
     
-    status_box = st.status("📡 Establishing Connection...", expanded=True)
-    status_box.write(f"Uploading {len(phone_list)} numbers...")
-    
-    file_content = "\n".join(phone_list)
-    files = {'file': ('input.txt', file_content, 'text/plain')}
-    data_payload = {'user_id': user_id} 
-    try:
-        resp = requests.post(CONFIG["CN_BASE_URL"], headers=headers, files=files, data=data_payload, proxies=req_proxies, timeout=30, verify=False)
-        if resp.status_code != 200:
-            status_box.update(label="❌ Upload Failed", state="error"); return set()
-        task_id = resp.json().get("task_id")
-    except: status_box.update(label="❌ Network Error", state="error"); return set()
-
-    status_url = f"{CONFIG['CN_BASE_URL']}/{task_id}"
-    result_url = None
-    for i in range(80):
-        try:
-            time.sleep(4)
-            poll_resp = requests.get(status_url, headers=headers, params={'user_id': user_id}, proxies=req_proxies, timeout=30, verify=False)
-            if poll_resp.status_code == 200:
-                p_data = poll_resp.json()
-                status = p_data.get("status")
-                done = p_data.get("success", 0) + p_data.get("failure", 0)
-                total = p_data.get("total", 1)
-                status_box.write(f"Verifying... {done}/{total} (Status: {status})")
-                if status in ["exported", "completed"]: result_url = p_data.get("result_url"); break
-        except: pass
-            
-    if not result_url: status_box.update(label="❌ Timeout", state="error"); return set()
+    # 使用 st.status 替代 st.info，更美观
+    with st.status("📡 Establishing Secure Connection...", expanded=True) as status:
+        status.write(f"Uploading {len(phone_list)} numbers to verification server...")
         
-    try:
-        status_box.write("Analyzing report...")
-        f_resp = requests.get(result_url, proxies=req_proxies, verify=False)
-        if f_resp.status_code == 200:
-            try: res_df = pd.read_excel(io.BytesIO(f_resp.content))
-            except: res_df = pd.read_csv(io.BytesIO(f_resp.content))
-            res_df.columns = [c.lower() for c in res_df.columns]
-            for _, r in res_df.iterrows():
-                ws = str(r.get('whatsapp') or r.get('status') or '').lower()
-                num = str(r.get('number') or r.get('phone') or '')
-                cn = re.sub(r'\D', '', num)
-                if "yes" in ws or "valid" in ws: valid_numbers_set.add(cn)
-            status_box.update(label=f"✅ Verified: {len(valid_numbers_set)} active accounts", state="complete")
-    except: status_box.update(label="❌ Parse Error", state="error")
+        file_content = "\n".join(phone_list)
+        files = {'file': ('input.txt', file_content, 'text/plain')}
+        data_payload = {'user_id': user_id} 
+        try:
+            resp = requests.post(CONFIG["CN_BASE_URL"], headers=headers, files=files, data=data_payload, proxies=req_proxies, timeout=30, verify=False)
+            if resp.status_code != 200:
+                status.update(label="❌ Upload Failed", state="error"); return set()
+            task_id = resp.json().get("task_id")
+        except: status.update(label="❌ Network Error", state="error"); return set()
+
+        status_url = f"{CONFIG['CN_BASE_URL']}/{task_id}"
+        result_url = None
+        for i in range(80):
+            try:
+                time.sleep(4)
+                poll_resp = requests.get(status_url, headers=headers, params={'user_id': user_id}, proxies=req_proxies, timeout=30, verify=False)
+                if poll_resp.status_code == 200:
+                    p_data = poll_resp.json()
+                    status_code = p_data.get("status")
+                    done = p_data.get("success", 0) + p_data.get("failure", 0)
+                    total = p_data.get("total", 1)
+                    status.write(f"Verifying... {done}/{total} (Status: {status_code})")
+                    if status_code in ["exported", "completed"]: result_url = p_data.get("result_url"); break
+            except: pass
+                
+        if not result_url: status.update(label="❌ Timeout", state="error"); return set()
+            
+        try:
+            status.write("Downloading detailed report...")
+            f_resp = requests.get(result_url, proxies=req_proxies, verify=False)
+            if f_resp.status_code == 200:
+                try: res_df = pd.read_excel(io.BytesIO(f_resp.content))
+                except: res_df = pd.read_csv(io.BytesIO(f_resp.content))
+                res_df.columns = [c.lower() for c in res_df.columns]
+                for _, r in res_df.iterrows():
+                    ws = str(r.get('whatsapp') or r.get('status') or '').lower()
+                    num = str(r.get('number') or r.get('phone') or '')
+                    cn = re.sub(r'\D', '', num)
+                    if "yes" in ws or "valid" in ws: valid_numbers_set.add(cn)
+                status.update(label=f"✅ Verification Complete! {len(valid_numbers_set)} active accounts found.", state="complete")
+        except: status.update(label="❌ Parse Error", state="error")
     return valid_numbers_set
 
 def get_ai_message_premium(client, shop_name, shop_link, web_content, rep_name):
-    """
-    v22.0: 增加 rep_name (业务员名字)
-    """
     if pd.isna(shop_name): shop_name = "Seller"
     if pd.isna(shop_link): shop_link = "Ozon Store"
     
     source_info = f"URL: {shop_link}"
     if web_content: source_info += f"\nScraped Page Content: {web_content}"
     
-    # === 988 Group 礼貌开场 Prompt ===
     prompt = f"""
     Role: Senior Business Development Manager at "988 Group" (China).
     Sender Name: "{rep_name}" 
@@ -239,11 +317,15 @@ def get_ai_message_premium(client, shop_name, shop_link, web_content, rep_name):
 def make_wa_link(phone, text):
     return f"https://wa.me/{phone}?text={urllib.parse.quote(text)}"
 
-# === 主程序界面 ===
+# === 主程序界面布局 ===
 
-st.markdown("### 🚀 988 Group AI-Driven Supply Chain")
-st.markdown("Automated Sourcing & Logistics Lead Generation")
-st.markdown("---")
+# Header Section
+st.title("988 Group | Intelligent CRM")
+st.markdown("""
+    <div style='background-color: #e6f0ff; padding: 15px; border-radius: 10px; border-left: 5px solid #0052cc; margin-bottom: 20px;'>
+        <strong>🚀 AI-Driven Workflow:</strong>  Upload Leads &rarr; Auto-Verify Numbers &rarr; Scrape Store Info &rarr; Generate Personalized Pitch
+    </div>
+""", unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader("📂 Upload Lead List (Excel/CSV)", type=['xlsx', 'csv'])
 
@@ -252,26 +334,26 @@ if uploaded_file:
         if uploaded_file.name.endswith('.csv'): df = pd.read_csv(uploaded_file, header=None)
         else: df = pd.read_excel(uploaded_file, header=None)
         df = df.astype(str)
+        st.success(f"✅ Loaded {len(df)} rows successfully.")
     except: st.stop()
         
+    st.markdown("### 1️⃣ Setup Mapping")
+    
+    # 更加优雅的卡片式布局
     with st.container():
-        st.info("👇 Step 1: Map Columns & Identity")
-        c1, c2, c3 = st.columns([1,1,1])
+        c1, c2, c3 = st.columns(3)
         with c1:
             shop_col_idx = st.selectbox("🏷️ Store Name Column", range(len(df.columns)), index=1 if len(df.columns)>1 else 0)
         with c2:
             link_col_idx = st.selectbox("🔗 Link Column", range(len(df.columns)), index=0)
         with c3:
-            # === 新增：业务员名字输入框 ===
             rep_name = st.text_input("👤 Your Name (Signature)", value="", placeholder="e.g. Anna")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if st.button("🚀 START AI ENGINE", type="primary"):
-        
-        # 强制要求输入名字
+    if st.button("🚀 LAUNCH ENGINE", type="primary"):
         if not rep_name:
-            st.error("⚠️ Please enter your name in the 'Your Name' box above.")
+            st.error("⚠️ Please enter your name first.")
             st.stop()
             
         my_proxy_str = get_proxy_config()
@@ -287,11 +369,14 @@ if uploaded_file:
         else:
             client = OpenAI(api_key=openai_key)
 
-        # 1. 提取
+        # 1. Extraction
         all_raw_phones = set()
         phone_to_rows = {}
         
+        # 进度条放在 sidebar 或 top，更干净
+        progress_text = st.empty()
         progress_bar = st.progress(0)
+        
         for i, row in df.iterrows():
             extracted = extract_all_numbers(row)
             for p in extracted:
@@ -302,21 +387,25 @@ if uploaded_file:
             
         if not all_raw_phones: st.error("No numbers found."); st.stop()
 
-        # 2. 验号
+        # 2. Verification
         valid_phones_set = process_checknumber_task(list(all_raw_phones))
         
-        # 3. AI 生成
+        # 3. AI Generation
         if valid_phones_set:
             st.markdown("---")
+            st.markdown("### 📊 Live Dashboard")
+            
+            # 仪表盘 UI
             kpi1, kpi2, kpi3 = st.columns(3)
-            kpi1.metric("Raw Numbers", len(all_raw_phones))
-            kpi2.metric("Verified WA", len(valid_phones_set))
+            kpi1.metric("Raw Numbers Scanned", len(all_raw_phones), delta_color="off")
+            kpi2.metric("Verified WhatsApp", len(valid_phones_set), delta_color="normal")
+            
             rate = len(valid_phones_set)/len(all_raw_phones)*100 if len(all_raw_phones)>0 else 0
-            kpi3.metric("Conversion Rate", f"{rate:.1f}%")
+            kpi3.metric("Success Rate", f"{rate:.1f}%")
             
-            st.success(f"🧠 AI is writing personalized messages for {rep_name}...")
+            st.info(f"🧠 AI is analyzing store links and generating messages for **{rep_name}**...")
+            
             final_results = []
-            
             valid_rows_indices = set()
             for p in valid_phones_set:
                 for r in phone_to_rows.get(p, []): valid_rows_indices.add(r)
@@ -333,7 +422,6 @@ if uploaded_file:
                     shop_name = row[shop_col_idx]
                     shop_link = row[link_col_idx]
                     
-                    # 爬取 + AI生成 (带入 rep_name)
                     web_content = extract_web_content(shop_link)
                     ai_msg = get_ai_message_premium(client, shop_name, shop_link, web_content, rep_name)
                     
@@ -343,20 +431,38 @@ if uploaded_file:
                         "Link": shop_link,
                         "Phone": ", ".join(row_valid),
                         "Personalized Message": ai_msg,
-                        "Direct Link": " | ".join(links)
+                        "Direct Link": " | ".join(links),
+                        "Phones List": row_valid,
+                        "Links List": links
                     })
                 ai_bar.progress((idx_step+1)/len(sorted_indices))
             
-            res_df = pd.DataFrame(final_results)
+            # 结果展示区 (修复 duplicate id 问题)
+            st.markdown("### 🎯 Generated Leads")
             
-            st.subheader("🎯 Qualified Leads")
-            for _, item in res_df.head(50).iterrows():
+            for i, item in enumerate(final_results):
                 with st.expander(f"🏢 {item['Shop Name']}"):
-                    st.write(f"**Generated:** {item['Personalized Message']}")
-                    for l in item['Direct Link'].split(" | "): 
-                        st.link_button("📲 Send via WhatsApp", l)
+                    st.markdown(f"**📝 AI Pitch:**")
+                    st.info(item['Personalized Message'])
+                    
+                    # 使用 columns 让按钮排版更整齐
+                    cols = st.columns(len(item['Links List']) if len(item['Links List']) < 4 else 4)
+                    
+                    for j, (phone_num, link) in enumerate(zip(item['Phones List'], item['Links List'])):
+                        # 确保 Key 唯一：使用 外层索引 i + 内层索引 j
+                        unique_key = f"btn_{i}_{j}"
+                        col_idx = j % 4
+                        with cols[col_idx]:
+                            st.link_button(f"📲 Chat (+{phone_num})", link, key=unique_key)
             
-            csv = res_df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 Download Final Report", csv, "988_premium_leads.csv", "text/csv")
+            # 下载按钮
+            csv = pd.DataFrame(final_results).to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 Download Full Report (CSV)",
+                data=csv,
+                file_name="988_platinum_leads.csv",
+                mime="text/csv",
+                type="primary" 
+            )
         else:
             st.warning("No valid WhatsApp numbers found.")
