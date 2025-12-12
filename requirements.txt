@@ -6,3 +6,4 @@ httpx
 openpyxl
 beautifulsoup4
 xlsxwriter
+supabase
