@@ -23,7 +23,7 @@ except ImportError:
 warnings.filterwarnings("ignore")
 
 # ==========================================
-# 🔧 配置
+# 🔧 系统配置
 # ==========================================
 CONFIG = {
     "PROXY_URL": None, 
@@ -96,7 +96,7 @@ def get_user_leads_history(username):
     except: return pd.DataFrame()
 
 # ==========================================
-# 🎨 赛博黑金·高对比版 UI (v50.0)
+# 🎨 赛博黑金·全域修复版 UI (v51.0)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="🚛")
 
@@ -104,7 +104,7 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
     
-    /* === 1. 全局背景：深邃流光 === */
+    /* === 1. 背景 === */
     .stApp {
         background: linear-gradient(135deg, #020024 0%, #090979 35%, #00d4ff 100%);
         background-size: 400% 400%;
@@ -119,7 +119,7 @@ st.markdown("""
     
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     
-    /* === 2. 侧边栏：纯黑磨砂 === */
+    /* === 2. 侧边栏 === */
     section[data-testid="stSidebar"] {
         background-color: #000000 !important;
         border-right: 1px solid rgba(255, 255, 255, 0.15);
@@ -128,10 +128,10 @@ st.markdown("""
         color: #ffffff !important;
     }
     
-    /* === 3. 卡片：深色实底 (保证字看得清) === */
+    /* === 3. 卡片与容器 === */
     div[data-testid="stExpander"], div[data-testid="stForm"], .login-card {
-        background-color: #0f172a !important; /* 深蓝黑实色 */
-        border: 1px solid rgba(56, 189, 248, 0.3); /* 青色边框 */
+        background-color: #0f172a !important;
+        border: 1px solid rgba(56, 189, 248, 0.3);
         border-radius: 10px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         margin-bottom: 16px;
@@ -142,73 +142,91 @@ st.markdown("""
     p, span, div, li, label {
         color: #ffffff !important;
         font-weight: 500;
-        text-shadow: 0 1px 1px rgba(0,0,0,0.8); /* 黑色投影，防撞色 */
     }
     h1, h2, h3, h4, strong {
-        color: #38bdf8 !important; /* 亮青色标题 */
+        color: #38bdf8 !important;
         font-weight: 800 !important;
     }
     
-    /* === 4. 核心修复：按钮样式 (强制高对比) === */
+    /* === 4. 按钮全域修复 (关键修改) === */
     
-    /* Streamlit 原生按钮 (Unlock / Start) */
-    div.stButton > button {
-        background-color: #2563eb !important; /* 纯蓝实色 */
+    /* 通用按钮规则 (覆盖所有按钮，包括上传、下载、提交) */
+    button {
         color: #ffffff !important;
+    }
+    
+    /* Streamlit 主按钮 & 下载按钮 & 表单提交按钮 */
+    div.stButton > button, div.stDownloadButton > button, .stFormSubmitButton > button {
+        background-color: #2563eb !important; /* 强制深蓝底色 */
+        background-image: linear-gradient(135deg, #2563eb, #0ea5e9) !important;
         border: 1px solid #60a5fa !important;
         padding: 0.75rem 1.5rem;
         border-radius: 8px;
         font-weight: 700;
         text-transform: uppercase;
-        box-shadow: 0 4px 0 #1e40af !important; /* 3D 阴影 */
+        box-shadow: 0 4px 0 #1e40af !important;
         transition: all 0.1s;
     }
-    div.stButton > button:hover {
-        background-color: #3b82f6 !important;
+    
+    div.stButton > button:hover, div.stDownloadButton > button:hover, .stFormSubmitButton > button:hover {
+        background-image: linear-gradient(135deg, #3b82f6, #38bdf8) !important;
         transform: translateY(2px);
         box-shadow: 0 2px 0 #1e40af !important;
     }
     
-    /* HTML 跳转按钮 (WhatsApp / Telegram) */
+    /* === 5. 文件上传按钮 (File Uploader) 专项修复 === */
+    /* 针对 "Browse files" 按钮 */
+    [data-testid="stFileUploader"] button {
+        background-color: #1e293b !important; /* 深色背景 */
+        color: #ffffff !important;
+        border: 1px solid #38bdf8 !important;
+    }
+    [data-testid="stFileUploader"] button:hover {
+        background-color: #334155 !important;
+        border-color: #ffffff !important;
+    }
+    /* 针对 "Drag and drop file here" 区域 */
+    [data-testid="stFileUploader"] {
+        color: #ffffff !important;
+    }
+    [data-testid="stFileUploader"] div {
+        color: #e2e8f0 !important;
+    }
+    
+    /* === 6. HTML 链接按钮 === */
     .btn-action {
         display: block !important;
         width: 100% !important;
         padding: 12px !important;
-        color: #ffffff !important; /* 强制白字 */
+        color: #ffffff !important;
         text-decoration: none !important;
         border-radius: 8px;
         font-weight: 700 !important;
         text-align: center;
         margin-top: 8px;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.8) !important; /* 文字加黑边 */
         border: 1px solid rgba(255,255,255,0.2);
-        transition: all 0.2s;
     }
-    
-    /* 微信绿：默认深一点，悬停亮一点 */
     .wa-green { 
-        background-color: #047857 !important; /* 深绿 (默认) */
+        background-color: #047857 !important;
         border-bottom: 4px solid #064e3b !important;
     }
     .wa-green:hover { 
-        background-color: #10b981 !important; /* 亮绿 (悬停) */
+        background-color: #10b981 !important;
         transform: translateY(2px);
         border-bottom: 2px solid #064e3b !important;
     }
-    
-    /* 电报蓝：默认深一点，悬停亮一点 */
     .tg-blue { 
-        background-color: #0369a1 !important; /* 深蓝 (默认) */
+        background-color: #0369a1 !important;
         border-bottom: 4px solid #075985 !important;
     } 
     .tg-blue:hover { 
-        background-color: #0ea5e9 !important; /* 亮蓝 (悬停) */
+        background-color: #0ea5e9 !important;
         transform: translateY(2px);
         border-bottom: 2px solid #075985 !important;
     }
     
-    /* 输入框 */
-    div[data-baseweb="input"] {
+    /* === 7. 输入框与下拉菜单 === */
+    div[data-baseweb="input"], div[data-baseweb="select"] {
         background-color: #1e293b !important;
         border: 1px solid #475569 !important;
         color: white !important;
@@ -219,6 +237,9 @@ st.markdown("""
     /* 状态提示 */
     div[data-testid="stStatusWidget"] {
         background-color: #0f172a; border: 1px solid #38bdf8;
+    }
+    div[data-testid="stMetricValue"] {
+        color: #facc15 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -378,7 +399,6 @@ with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", width=180)
     st.markdown(f"👋 **{st.session_state['real_name']}**")
     
-    # 菜单汉化
     menu = st.radio("导航菜单", ["🚀 客户开发 (Workbench)", "📂 历史记录 (History)", "📊 管理后台 (Admin)"] if st.session_state['role']=='admin' else ["🚀 客户开发 (Workbench)", "📂 历史记录 (History)"])
     st.divider()
     if st.button("🚪 退出登录"): st.session_state.clear(); st.rerun()
@@ -386,7 +406,7 @@ with st.sidebar:
 # 1. Workbench
 if "Workbench" in str(menu):
     st.title("🚀 智能获客工作台")
-    st.caption("AI 驱动的供应链客户挖掘系统 | v50.0 Pro")
+    st.caption("AI 驱动的供应链客户挖掘系统 | v51.0 Pro")
     
     with st.expander("📂 导入数据 (Excel/CSV)", expanded=st.session_state['results'] is None):
         up_file = st.file_uploader("选择文件", type=['xlsx', 'csv'])
@@ -400,10 +420,9 @@ if "Workbench" in str(menu):
                 with c2: l_col = st.selectbox("选择【店铺链接】列 (AI分析用)", range(len(df.columns)), 0)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🚀 启动 AI 引擎"):
+                if st.button("🚀 启动 AI 引擎 (Start Engine)"):
                     client = OpenAI(api_key=OPENAI_KEY)
                     
-                    # Extract
                     raw_phones = set()
                     row_map = {}
                     bar = st.progress(0)
@@ -417,7 +436,6 @@ if "Workbench" in str(menu):
                     
                     if not raw_phones: st.error("❌ 未发现任何号码"); st.stop()
                     
-                    # Verify
                     status_map = process_checknumber_task(list(raw_phones), CN_KEY, CN_USER)
                     valid_phones = [p for p in raw_phones if status_map.get(p) == 'valid']
                     
