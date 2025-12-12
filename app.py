@@ -1,3 +1,7 @@
++327
+Lines changed: 327 additions & 0 deletions
+Original file line number	Diff line number	Diff line change
+@@ -0,0 +1,327 @@
 import streamlit as st
 import pandas as pd
 import re
@@ -9,10 +13,8 @@ import httpx
 import time
 import io
 import os
-
 # 忽略 SSL 警告
 warnings.filterwarnings("ignore")
-
 # ==========================================
 # 🔧 988 Group 企业云端配置 (安全版)
 # ==========================================
@@ -22,14 +24,12 @@ CONFIG = {
     "PROXY_URL": None, # 云端无需代理
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks"
 }
-
 # 1. 页面基础设置
 st.set_page_config(
     page_title="988 Group - 智能获客系统", 
     layout="wide", 
     page_icon="🚛"
 )
-
 # 2. 自定义 CSS
 st.markdown("""
 <style>
@@ -49,7 +49,6 @@ st.markdown("""
     div[data-testid="stExpander"] {border: 1px solid #e0e0e0; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);}
 </style>
 """, unsafe_allow_html=True)
-
 # === 侧边栏 ===
 with st.sidebar:
     if os.path.exists("logo.png"):
@@ -74,7 +73,6 @@ with st.sidebar:
         default_cn_key = ""
         default_openai = ""
         is_configured = False
-
     with st.expander("⚙️ 开发者选项 (Admin)", expanded=False):
         use_proxy = st.checkbox("开启网络代理 (本地调试用)", value=False)
         proxy_port = st.text_input("代理地址", value="http://127.0.0.1:10809")
@@ -83,13 +81,10 @@ with st.sidebar:
         check_user_id = st.text_input("User ID", value=default_cn_user)
         check_key = st.text_input("CN Key", value=default_cn_key, type="password")
         openai_key = st.text_input("OpenAI Key", value=default_openai, type="password")
-
 # === 核心函数 ===
-
 def get_proxy_config():
     if use_proxy and proxy_port: return proxy_port.strip()
     return None
-
 def extract_all_numbers(row_series):
     full_text = " ".join([str(val) for val in row_series if pd.notna(val)])
     full_text = re.sub(r'[;,\t\n/]+', ' ', full_text)
@@ -106,7 +101,6 @@ def extract_all_numbers(row_series):
         if clean_num:
             candidates.append(clean_num)
     return list(set(candidates))
-
 def process_checknumber_task(phone_list):
     if not phone_list: return set()
     valid_numbers_set = set()
@@ -117,7 +111,6 @@ def process_checknumber_task(phone_list):
     if not api_key or not user_id:
         st.error("❌ 缺少 API Key 或 User ID，请检查后台配置。")
         return set()
-
     headers = {"X-API-Key": api_key, "User-Agent": "Mozilla/5.0"}
     my_proxy_str = get_proxy_config()
     req_proxies = {"http": my_proxy_str, "https": my_proxy_str} if my_proxy_str else None
@@ -140,7 +133,6 @@ def process_checknumber_task(phone_list):
         status_box.update(label="❌ 网络连接错误", state="error")
         st.error(str(e))
         return set()
-
     # Polling
     status_url = f"{CONFIG['CN_BASE_URL']}/{task_id}"
     result_url = None
@@ -183,9 +175,7 @@ def process_checknumber_task(phone_list):
             status_box.update(label=f"✅ 验证完成！发现 {len(valid_numbers_set)} 个有效客户", state="complete")
     except Exception as e:
         status_box.update(label="❌ 解析错误", state="error")
-
     return valid_numbers_set
-
 def get_ai_message_988(client, shop_name, shop_link):
     if pd.isna(shop_name): shop_name = "Seller"
     if pd.isna(shop_link): shop_link = "Ozon Store"
@@ -221,17 +211,12 @@ def get_ai_message_988(client, shop_name, shop_link):
         return response.choices[0].message.content.strip()
     except Exception as e:
         return f"Здравствуйте, {shop_name}! Мы компания 988 Group. Занимаемся закупкой и доставкой. Интересно?"
-
 def make_wa_link(phone, text):
     return f"https://wa.me/{phone}?text={urllib.parse.quote(text)}"
-
 # === 主程序 ===
-
 st.title("988 Group 客户开发系统")
 st.markdown("##### 🚀 全自动采购与物流客户挖掘引擎")
-
 uploaded_file = st.file_uploader("📂 上传表格 (Excel/CSV)", type=['xlsx', 'csv'])
-
 if uploaded_file:
     try:
         if uploaded_file.name.endswith('.csv'): df = pd.read_csv(uploaded_file, header=None)
@@ -247,16 +232,13 @@ if uploaded_file:
             shop_col_idx = st.selectbox("🏷️ 店名在第几列?", range(len(df.columns)), index=1 if len(df.columns)>1 else 0)
         with c2:
             link_col_idx = st.selectbox("🔗 链接在第几列?", range(len(df.columns)), index=0)
-
     st.markdown("---")
-
     if st.button("🚀 开始自动化作业 (988 Cloud)", type="primary"):
         my_proxy_str = get_proxy_config()
         
         if not openai_key:
             st.error("❌ 未配置 OpenAI Key，请联系管理员在后台 Secrets 添加。")
             st.stop()
-
         client = None
         if my_proxy_str:
             try:
@@ -266,7 +248,6 @@ if uploaded_file:
             except: st.error("代理配置失败"); st.stop()
         else:
             client = OpenAI(api_key=openai_key)
-
         # 1. 提取
         all_raw_phones = set()
         phone_to_rows = {}
@@ -280,7 +261,6 @@ if uploaded_file:
         if not all_raw_phones:
             st.error("未发现号码")
             st.stop()
-
         # 2. 验号
         valid_phones_set = process_checknumber_task(list(all_raw_phones))
         
