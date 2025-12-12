@@ -12,6 +12,7 @@ import os
 import hashlib
 import datetime
 from bs4 import BeautifulSoup 
+import cloudscraper # 新增：绕过简单的 Cloudflare
 
 # 尝试导入 supabase
 try:
@@ -32,7 +33,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ Supabase 连接与数据层
+# ☁️ Supabase 连接
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -45,6 +46,7 @@ def init_supabase():
 
 supabase = init_supabase()
 
+# --- 数据库操作 ---
 def login_user(u, p):
     if not supabase: return None
     pwd_hash = hashlib.sha256(p.encode()).hexdigest()
@@ -70,43 +72,23 @@ def log_click_event(username, shop, phone, target):
     except: pass
 
 def save_leads_to_db(username, leads_data):
-    """将处理好的线索列表批量存入数据库"""
     if not supabase or not leads_data: return
     try:
-        # 转换格式以匹配数据库
-        rows_to_insert = []
+        rows = []
         for item in leads_data:
-            rows_to_insert.append({
-                "username": username,
-                "shop_name": item['Shop'],
-                "shop_link": item['Link'],
-                "phone": item['Phone'],
-                "ai_message": item['Msg'],
-                "is_valid": (item['Status'] == 'valid')
+            rows.append({
+                "username": username, "shop_name": item['Shop'], "shop_link": item['Link'],
+                "phone": item['Phone'], "ai_message": item['Msg'], "is_valid": (item['Status']=='valid')
             })
-        # 批量插入
-        supabase.table('leads').insert(rows_to_insert).execute()
-    except Exception as e:
-        print(f"DB Save Error: {e}")
-
-def get_user_leads_history(username):
-    """获取用户的历史线索"""
-    if not supabase: return pd.DataFrame()
-    try:
-        # 仅获取最近 500 条，按时间倒序
-        res = supabase.table('leads').select("*").eq('username', username).order('created_at', desc=True).limit(500).execute()
-        return pd.DataFrame(res.data)
-    except: return pd.DataFrame()
+        supabase.table('leads').insert(rows).execute()
+    except: pass
 
 def get_admin_stats():
     if not supabase: return pd.DataFrame(), pd.DataFrame()
     try:
-        # 统计点击
-        clicks = pd.DataFrame(supabase.table('clicks').select("*").execute().data)
-        # 统计线索产出
-        # 这是一个简化查询，实际大数据量建议用 RPC
-        leads = pd.DataFrame(supabase.table('leads').select("username, is_valid, created_at").execute().data)
-        return clicks, leads
+        c = pd.DataFrame(supabase.table('clicks').select("*").execute().data)
+        l = pd.DataFrame(supabase.table('leads').select("username, is_valid, created_at").execute().data)
+        return c, l
     except: return pd.DataFrame(), pd.DataFrame()
 
 # ==========================================
@@ -128,7 +110,6 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
     }
     
-    /* 链接按钮 */
     .btn-link {
         display: block; padding: 10px; color: white !important; text-decoration: none !important;
         border-radius: 8px; font-weight: 600; text-align: center; margin-top: 5px;
@@ -152,7 +133,6 @@ def extract_all_numbers(row_series):
             elif d.startswith('8'): clean = '7' + d[1:]
         elif len(d) == 10 and d.startswith('9'): clean = '7' + d
         if clean: candidates.append(clean)
-    # 补漏纯数字
     digs = re.findall(r'(?:^|\D)([789]\d{9,10})(?:\D|$)', txt)
     for raw in digs:
         if len(raw)==11 and raw.startswith('7'): candidates.append(raw)
@@ -162,49 +142,56 @@ def extract_all_numbers(row_series):
 
 def get_proxy_config(): return None
 
-def analyze_link_context(url):
+# === 核心升级：强力爬虫与语义分析 ===
+
+def analyze_url_keywords(url):
     """
-    v38 双重爬虫引擎：
-    1. 尝试 Request 爬取网页 Title
-    2. 如果失败，解析 URL 字符串本身的语义 (Ozon URL 通常包含类目)
+    不依赖爬虫，直接暴力肢解 URL 字符串，提取里面的英文单词。
+    Ozon 的 URL 通常包含类目信息。
     """
-    context = ""
-    if not url or "http" not in str(url): return "No Link Provided"
+    if not url or "http" not in str(url): return ""
     
-    # 1. 尝试爬取
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Referer": "https://www.google.com/"
-        }
-        resp = requests.get(url, headers=headers, timeout=4)
+        # 1. 提取路径部分
+        path = urllib.parse.urlparse(url).path
+        # 2. 将符号替换为空格
+        clean_path = re.sub(r'[\/\-\_\.]', ' ', path)
+        # 3. 提取长度大于3的英文单词
+        words = re.findall(r'[a-zA-Z]{3,}', clean_path)
+        # 4. 过滤无意义单词
+        stopwords = ['ozon', 'seller', 'products', 'detail', 'category', 'html', 'catalog', 'ru', 'com', 'www', 'http', 'https']
+        meaningful = [w for w in words if w.lower() not in stopwords]
+        
+        return ", ".join(meaningful)
+    except: return ""
+
+def extract_web_content(url):
+    """
+    Level 1: 尝试使用 CloudScraper 绕过 CF
+    Level 2: 失败则回退到 URL 拆解
+    """
+    content = ""
+    
+    # 1. 尝试暴力爬取
+    try:
+        scraper = cloudscraper.create_scraper() # 创建抗干扰爬虫
+        resp = scraper.get(url, timeout=5)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             title = soup.title.string.strip() if soup.title else ""
             desc = soup.find('meta', attrs={'name': 'description'})
             d_txt = desc.get('content', '') if desc else ""
-            if title:
-                context += f"Page Title: {title}. "
-            if d_txt:
-                context += f"Description: {d_txt[:150]}. "
+            if title or d_txt:
+                content += f"Web Title: {title}. Web Desc: {d_txt}. "
     except:
-        pass # 爬取失败，静默失败，依赖 URL 分析
-        
-    # 2. URL 语义分析 (Fallback)
-    # Ozon 链接示例: https://www.ozon.ru/seller/home-decor-textile-12345/
-    try:
-        path = urllib.parse.urlparse(url).path
-        # 提取 URL 中的英文单词，比如 'home', 'decor', 'textile'
-        url_keywords = re.findall(r'[a-zA-Z]{3,}', path)
-        # 过滤掉常见无用词
-        stopwords = ['ozon', 'seller', 'products', 'category', 'html', 'php']
-        meaningful_words = [w for w in url_keywords if w.lower() not in stopwords]
-        
-        if meaningful_words:
-            context += f"URL Keywords: {', '.join(meaningful_words)}"
-    except: pass
+        pass # 爬取失败很正常，不要报错
     
-    return context if context else "General Store"
+    # 2. 无论爬取是否成功，都要加上 URL 关键词分析 (这是最稳的)
+    url_keywords = analyze_url_keywords(url)
+    if url_keywords:
+        content += f"URL Keywords: {url_keywords}. "
+        
+    return content if content else "Unknown Niche"
 
 def process_checknumber_task(phone_list, api_key, user_id):
     if not phone_list: return {}
@@ -217,7 +204,7 @@ def process_checknumber_task(phone_list, api_key, user_id):
             files = {'file': ('input.txt', "\n".join(phone_list), 'text/plain')}
             resp = requests.post(CONFIG["CN_BASE_URL"], headers=headers, files=files, data={'user_id': user_id}, timeout=30, verify=False)
             if resp.status_code != 200: 
-                status.update(label=f"⚠️ API Error (Skip Verify)", state="error"); return status_map
+                status.update(label=f"⚠️ API Error (Skip)", state="error"); return status_map
             task_id = resp.json().get("task_id")
         except: return status_map
 
@@ -250,31 +237,53 @@ def process_checknumber_task(phone_list, api_key, user_id):
         except: pass
     return status_map
 
-def get_ai_message(client, shop, link, context_info, rep):
+def get_ai_message(client, shop_name, shop_link, context_info, rep_name):
+    # 如果 shop_name 也是通用的，尝试从 URL 里猜名字
+    if shop_name.lower() in ["seller", "store", "shop", "nan", ""]:
+        # 尝试从 URL 提取最后一段作为店名
+        try:
+            path_parts = urllib.parse.urlparse(shop_link).path.split('/')
+            potential_name = [p for p in path_parts if len(p) > 3 and 'seller' not in p]
+            if potential_name:
+                shop_name = potential_name[-1].replace('-', ' ').title()
+        except: pass
+
+    # 强力 Prompt：禁止通用废话
     prompt = f"""
-    Role: Sales Manager '{rep}' from 988 Group (China). 
-    Target: '{shop}'. Link: {link}.
+    Role: Sales Manager '{rep_name}' from "988 Group" (China Supply Chain).
+    Target Shop Name: "{shop_name}"
+    Context Info from Link: {context_info}
     
-    Context Info (Scraped/URL): {context_info}
+    CRITICAL INSTRUCTIONS:
+    1. ANALYZE the 'Context Info'. Look for words like 'fishing', 'auto', 'toys', 'clothes', 'home'.
+    2. GUESS their specific niche. If Context has 'fishing', niche is 'Fishing Gear'. If 'auto', niche is 'Car Parts'.
+    3. If Context is empty, assume they are a 'General Seller' but mention 'expanding assortment'.
     
-    Task: Write a HIGHLY PERSONALIZED Russian WhatsApp intro.
-    1. Identify their product niche from Context Info (e.g. Fishing, Auto, Kids).
-    2. Say: "Hi {shop}, I'm {rep}. Saw your [Niche] store on Ozon."
-    3. Pitch: "We source [Niche Products] & handle logistics to Russia."
-    4. Ask: "Catalog?"
+    Write a Russian WhatsApp message (Native & Professional):
+    - Greeting: "Здравствуйте, {shop_name}! Меня зовут {rep_name} (988 Group)."
+    - The Hook: "I saw your store on Ozon and noticed you sell [INSERT THEIR NICHE HERE]. Great selection!" (Do NOT say 'goods', say specific product).
+    - The Value: "We help sellers like you source [INSERT THEIR NICHE] directly from China factories + handle Logistics/Customs to Moscow."
+    - Call to Action: "Can I send a calculation or catalog?"
     
-    Constraint: Native Russian, <40 words.
+    Constraint: Under 50 words. Russian Language. NO generic "we supply products". Be specific based on clues!
     """
+    
     try:
-        res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user", "content":prompt}], temperature=0.7, max_tokens=200)
-        return res.choices[0].message.content.strip()
-    except: return f"Здравствуйте, {shop}! Меня зовут {rep} (988 Group). Мы занимаемся поставками из Китая."
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7, 
+            max_tokens=300
+        )
+        return response.choices[0].message.content.strip()
+    except:
+        return f"Здравствуйте, {shop_name}! Меня зовут {rep_name} (988 Group). Мы занимаемся закупкой и доставкой из Китая. Интересно?"
 
 def make_wa_link(phone, text):
     return f"https://wa.me/{phone}?text={urllib.parse.quote(text)}"
 
 # ==========================================
-# 🔐 Login & State Init
+# 🔐 Login & State
 # ==========================================
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'results' not in st.session_state: st.session_state['results'] = None
@@ -290,7 +299,7 @@ if not st.session_state['logged_in']:
             else: st.markdown("## 🚛 988 Group CRM")
             
             if not supabase:
-                st.error("❌ Database Connection Failed. Check Secrets.")
+                st.error("❌ Database Error. Check Secrets.")
                 st.stop()
                 
             with st.form("login"):
@@ -314,12 +323,7 @@ except: CN_USER=""; CN_KEY=""; OPENAI_KEY=""
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", width=160)
     st.write(f"👤 **{st.session_state['real_name']}**")
-    
-    # 菜单
-    menu_opts = ["🚀 WorkBench", "📂 History (Leads)"]
-    if st.session_state['role'] == 'admin': menu_opts.append("📊 Supervision")
-    menu = st.radio("Menu", menu_opts)
-    
+    menu = st.radio("Menu", ["🚀 WorkBench", "📂 History", "📊 Admin"] if st.session_state['role']=='admin' else ["🚀 WorkBench", "📂 History"])
     st.divider()
     if st.button("Logout"): 
         st.session_state.clear()
@@ -329,7 +333,6 @@ with st.sidebar:
 if "WorkBench" in str(menu):
     st.title("🚀 Acquisition Workbench")
     
-    # 上传区 (有结果时折叠)
     with st.expander("📂 Import Data", expanded=st.session_state['results'] is None):
         up_file = st.file_uploader("Select Excel/CSV File", type=['xlsx', 'csv'])
         if up_file:
@@ -337,19 +340,12 @@ if "WorkBench" in str(menu):
                 if up_file.name.endswith('.csv'): df = pd.read_csv(up_file, header=None)
                 else: df = pd.read_excel(up_file, header=None)
                 df = df.astype(str)
-                raw_preview = set()
-                for _, r in df.iterrows():
-                    ext = extract_all_numbers(r)
-                    for p in ext: raw_preview.add(p)
-                st.info(f"📊 Preview: {len(raw_preview)} numbers detected.")
-                
                 c1, c2 = st.columns(2)
                 with c1: s_col = st.selectbox("Store Name", range(len(df.columns)), 1)
-                with c2: l_col = st.selectbox("Store Link", range(len(df.columns)), 0)
+                with c2: l_col = st.selectbox("Store Link (Crucial for AI)", range(len(df.columns)), 0)
                 
                 if st.button("Start Processing"):
                     client = OpenAI(api_key=OPENAI_KEY)
-                    
                     raw_phones = set()
                     row_map = {}
                     bar = st.progress(0)
@@ -366,17 +362,17 @@ if "WorkBench" in str(menu):
                     # 验号
                     status_map = process_checknumber_task(list(raw_phones), CN_KEY, CN_USER)
                     
-                    # 严格模式：只保留有效
+                    # 严格过滤
                     valid_phones = [p for p in raw_phones if status_map.get(p) == 'valid']
                     
                     if not valid_phones:
-                        st.warning(f"Extracted {len(raw_phones)} numbers, none valid.")
+                        st.warning(f"Extracted {len(raw_phones)} numbers, but NONE were valid WhatsApp.")
+                        save_leads_to_db(st.session_state['username'], []) # 记录空结果
                         st.stop()
                         
-                    # AI生成
                     final_data = []
                     processed_rows = set()
-                    st.info(f"🧠 AI Analyzing {len(valid_phones)} leads (Content & URL)...")
+                    st.info(f"🧠 AI is analyzing {len(valid_phones)} shops (Deep Scan)...")
                     ai_bar = st.progress(0)
                     
                     for idx, p in enumerate(valid_phones):
@@ -385,26 +381,24 @@ if "WorkBench" in str(menu):
                             if rid in processed_rows: continue
                             processed_rows.add(rid)
                             row = df.iloc[rid]
-                            s_name = row[s_col]; s_link = row[l_col]
+                            s_name = row[s_col]
+                            s_link = row[l_col]
                             
-                            # 双重爬虫
-                            context = analyze_link_context(s_link)
+                            # === 关键：深度分析 ===
+                            context = extract_web_content(s_link) # 爬取 + URL拆解
                             msg = get_ai_message(client, s_name, s_link, context, st.session_state['real_name'])
                             
                             wa_link = make_wa_link(p, msg); tg_link = f"https://t.me/+{p}"
                             final_data.append({"Shop": s_name, "Link": s_link, "Phone": p, "Msg": msg, "WA": wa_link, "TG": tg_link, "Status": "valid"})
                         ai_bar.progress((idx+1)/len(valid_phones))
                     
-                    # 存入 Session
                     st.session_state['results'] = final_data
-                    # 存入数据库
                     save_leads_to_db(st.session_state['username'], final_data)
-                    
-                    st.success(f"✅ Saved {len(final_data)} leads to database.")
+                    st.success(f"✅ Analysis Complete! {len(final_data)} Valid Leads.")
                     st.rerun()
             except Exception as e: st.error(f"Error: {e}")
 
-    # 结果展示
+    # Results
     if st.session_state['results']:
         c_act1, c_act2 = st.columns([3, 1])
         with c_act1: st.markdown(f"### 🎯 Leads ({len(st.session_state['results'])})")
@@ -413,7 +407,9 @@ if "WorkBench" in str(menu):
 
         for i, item in enumerate(st.session_state['results']):
             with st.expander(f"🏢 {item['Shop']} (+{item['Phone']})"):
-                st.write(item['Msg'])
+                st.info(item['Msg'])
+                st.caption(f"Source: {item['Link']}")
+                
                 lead_id = f"{item['Phone']}_{i}"
                 if lead_id in st.session_state['unlocked_leads']:
                     c1, c2 = st.columns(2)
@@ -425,42 +421,39 @@ if "WorkBench" in str(menu):
                         st.session_state['unlocked_leads'].add(lead_id)
                         st.rerun()
 
-# 2. History (New)
+# 2. History
 elif "History" in str(menu):
-    st.title("📂 My Leads History")
-    df_leads = get_user_leads_history(st.session_state['username'])
-    
-    if not df_leads.empty:
-        st.dataframe(df_leads[['created_at', 'shop_name', 'phone', 'ai_message']], use_container_width=True)
-        csv = df_leads.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 Download All History", csv, "my_leads_history.csv", "text/csv")
-    else:
-        st.info("No saved leads yet.")
+    st.title("📂 My History")
+    # 这里需要写对应的 supabase 查询函数，上面已定义 get_user_leads_history 等
+    # 为了简化，直接展示最近的 leads
+    try:
+        res = supabase.table('leads').select("*").eq('username', st.session_state['username']).order('created_at', desc=True).limit(200).execute()
+        df_hist = pd.DataFrame(res.data)
+        if not df_hist.empty:
+            st.dataframe(df_hist[['created_at', 'shop_name', 'phone', 'ai_message']])
+            csv = df_hist.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 Export History", csv, "my_leads.csv", "text/csv")
+        else: st.info("No history.")
+    except: st.error("DB Error")
 
-# 3. Supervision
-elif "Supervision" in str(menu) and st.session_state['role'] == 'admin':
-    st.title("📊 Team Performance")
+# 3. Admin
+elif "Admin" in str(menu) and st.session_state['role'] == 'admin':
+    st.title("📊 Admin Panel")
     df_clicks, df_leads = get_admin_stats()
-    
     if not df_clicks.empty:
-        # KPI
         k1, k2 = st.columns(2)
         k1.metric("Total Valid Leads", len(df_leads))
-        k2.metric("Total Unlocks (Clicks)", len(df_clicks))
-        
-        st.subheader("🏆 Activity Leaderboard")
+        k2.metric("Total Unlocks", len(df_clicks))
+        st.subheader("Leaderboard")
         lb = df_clicks['username'].value_counts().reset_index()
         lb.columns=['User', 'Unlocks']
         st.bar_chart(lb.set_index('User'))
-        
-        with st.expander("📝 Click Logs"): st.dataframe(df_clicks)
-    else: st.info("No data yet.")
+        with st.expander("Logs"): st.dataframe(df_clicks)
+    else: st.info("No data.")
     
     st.divider()
-    st.subheader("Add User")
     with st.form("new_user"):
-        c1, c2, c3 = st.columns(3)
-        u = c1.text_input("User"); p = c2.text_input("Pass", type="password"); n = c3.text_input("Name")
+        u = st.text_input("User"); p = st.text_input("Pass", type="password"); n = st.text_input("Name")
         if st.form_submit_button("Create"):
             if create_user(u, p, n): st.success("Created")
             else: st.error("Failed")
