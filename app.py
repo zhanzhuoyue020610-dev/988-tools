@@ -23,7 +23,7 @@ except ImportError:
 warnings.filterwarnings("ignore")
 
 # ==========================================
-# 🔧 系统配置
+# 🔧 配置
 # ==========================================
 CONFIG = {
     "PROXY_URL": None, 
@@ -31,7 +31,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库连接
+# ☁️ 数据库
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -96,99 +96,108 @@ def get_user_leads_history(username):
     except: return pd.DataFrame()
 
 # ==========================================
-# 🎨 高对比度深空 UI (High Contrast Space)
+# 🎨 赛博黑金 UI (Cyber Black & Gold)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="🚛")
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
     
-    /* === 1. 背景：保留流光，但加深色调 === */
+    /* === 1. 背景：黑夜中的一道光 === */
     .stApp {
-        background: linear-gradient(-45deg, #000000, #0a0a23, #141e30, #000000);
-        background-size: 400% 400%;
-        animation: gradientBG 12s ease infinite;
+        /* 纯黑底色，叠加一道高亮流光 */
+        background: linear-gradient(120deg, #000000 0%, #0a0a0a 40%, #1e3a8a 50%, #0a0a0a 60%, #000000 100%);
+        background-size: 300% 300%;
+        animation: lightBeam 6s linear infinite; /* 速度加快，更明显 */
         font-family: 'Inter', sans-serif;
     }
     
-    @keyframes gradientBG {
+    @keyframes lightBeam {
         0% { background-position: 0% 50%; }
-        50% { background-position: 100% 50%; }
-        100% { background-position: 0% 50%; }
+        100% { background-position: 100% 50%; }
     }
     
-    /* === 2. 侧边栏：纯黑磨砂 === */
-    section[data-testid="stSidebar"] {
-        background-color: #050505;
-        border-right: 1px solid #333;
-    }
-    
-    /* === 3. 卡片优化：去雾化，高对比 === */
-    div[data-testid="stExpander"], div[data-testid="stForm"], .login-card {
-        background-color: rgba(10, 15, 30, 0.95) !important; /* 几乎不透明的深蓝黑 */
-        border: 1px solid rgba(100, 200, 255, 0.2); /* 亮青色边框，增加轮廓感 */
-        border-radius: 12px;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8); /* 强阴影，让卡片浮起来 */
-        color: #ffffff !important;
-        margin-bottom: 16px;
-    }
-    
-    /* === 4. 字体颜色修正：拒绝灰色，拥抱纯白 === */
-    /* 普通文本 */
-    p, li, span, div {
-        color: #ffffff !important;
-        font-weight: 500 !important; /* 稍微加粗，防虚 */
-        text-shadow: 0 1px 2px rgba(0,0,0,0.8); /* 文字阴影，防背景干扰 */
-    }
-    /* 标题 */
-    h1, h2, h3, h4, strong {
-        color: #38bdf8 !important; /* 亮青色 */
-        font-weight: 700 !important;
-        letter-spacing: 0.5px;
-    }
-    /* 标签 */
-    label {
-        color: #94a3b8 !important;
-        font-weight: 600 !important;
-    }
-    
-    /* === 5. 按钮与输入框 === */
-    div.stButton > button {
-        background: linear-gradient(90deg, #2563eb, #0ea5e9);
-        color: white; border: none; padding: 0.75rem; border-radius: 8px;
-        font-weight: 700; text-transform: uppercase;
-        border: 1px solid rgba(255,255,255,0.2);
-    }
-    div.stButton > button:hover {
-        box-shadow: 0 0 20px rgba(14, 165, 233, 0.7);
-        border-color: #fff;
-    }
-    
-    /* 输入框：深底白字 */
-    div[data-baseweb="input"] {
-        background-color: #1e293b !important;
-        border: 1px solid #475569 !important;
-        color: white !important;
-    }
-    input { color: white !important; font-weight: 600 !important; }
-    
-    /* 链接按钮 */
-    .btn-action {
-        display: block; padding: 12px; color: white !important; text-decoration: none !important;
-        border-radius: 8px; font-weight: 700; text-align: center; margin-top: 8px;
-        border: 1px solid rgba(255,255,255,0.1);
-        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-    }
-    .wa-green { background: #059669; }
-    .wa-green:hover { background: #10b981; box-shadow: 0 0 15px #10b981; }
-    
-    .tg-blue { background: #0284c7; }
-    .tg-blue:hover { background: #0ea5e9; box-shadow: 0 0 15px #0ea5e9; }
-    
-    /* 隐藏杂项 */
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     
+    /* === 2. 侧边栏：纯黑实色 === */
+    section[data-testid="stSidebar"] {
+        background-color: #020617; /* 纯深蓝黑 */
+        border-right: 1px solid #1e293b;
+    }
+    
+    /* === 3. 卡片：拒绝磨砂，使用实底高对比 === */
+    div[data-testid="stExpander"], div[data-testid="stForm"], .login-card {
+        background-color: #0f172a !important; /* 实色背景，不透明！确保字清晰 */
+        border: 1px solid #38bdf8; /* 亮青色描边，体现高级感 */
+        border-radius: 8px;
+        box-shadow: 0 0 15px rgba(56, 189, 248, 0.15); /* 微弱的霓虹光晕 */
+        margin-bottom: 16px;
+        color: white !important;
+    }
+    
+    /* 文字颜色：纯白 */
+    p, span, div, li, label {
+        color: #ffffff !important;
+        font-weight: 500;
+    }
+    /* 标题颜色：青蓝渐变字 */
+    h1, h2, h3, h4, strong {
+        background: linear-gradient(to right, #60a5fa, #22d3ee);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 800 !important;
+    }
+    
+    /* === 4. 输入框 === */
+    div[data-baseweb="input"] {
+        background-color: #1e293b !important; /* 深灰色底 */
+        border: 1px solid #475569 !important;
+        color: white !important;
+        border-radius: 6px;
+    }
+    input { color: white !important; }
+    
+    /* === 5. 按钮：实打实的亮色 === */
+    div.stButton > button {
+        background: #2563eb; /* 纯蓝 */
+        color: white; border: none; padding: 0.75rem; border-radius: 6px;
+        font-weight: 700; text-transform: uppercase;
+        box-shadow: 0 4px 0 #1e40af; /* 3D按压感 */
+        transition: all 0.1s;
+    }
+    div.stButton > button:hover {
+        background: #3b82f6;
+        transform: translateY(2px);
+        box-shadow: 0 2px 0 #1e40af;
+    }
+    
+    /* === 6. HTML 链接按钮 === */
+    .btn-action {
+        display: block; padding: 12px; color: white !important; text-decoration: none !important;
+        border-radius: 6px; font-weight: 700; text-align: center; margin-top: 8px;
+        text-shadow: 0 1px 1px rgba(0,0,0,0.5);
+    }
+    /* 微信绿 (实色) */
+    .wa-green { background-color: #10b981; border-bottom: 3px solid #047857; }
+    .wa-green:hover { background-color: #34d399; }
+    
+    /* 电报蓝 (实色) */
+    .tg-blue { background-color: #0ea5e9; border-bottom: 3px solid #0369a1; }
+    .tg-blue:hover { background-color: #38bdf8; }
+    
+    /* 指标卡片 */
+    div[data-testid="stMetricValue"] {
+        color: #facc15 !important; /* 亮黄色数字，黑底上最清晰 */
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #94a3b8 !important; /* 浅灰标签 */
+    }
+    
+    /* 状态提示框 */
+    div[data-testid="stStatusWidget"] {
+        background-color: #0f172a; border: 1px solid #38bdf8;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -244,7 +253,7 @@ def process_checknumber_task(phone_list, api_key, user_id):
     if not phone_list: return {}
     status_map = {p: 'unknown' for p in phone_list}
     headers = {"X-API-Key": api_key, "User-Agent": "Mozilla/5.0"}
-    with st.status("📡 正在连接云端验证...", expanded=True) as status:
+    with st.status("📡 正在进行云端验号...", expanded=True) as status:
         status.write(f"正在上传 {len(phone_list)} 个号码...")
         try:
             files = {'file': ('input.txt', "\n".join(phone_list), 'text/plain')}
@@ -306,7 +315,7 @@ def make_wa_link(phone, text):
     return f"https://wa.me/{phone}?text={urllib.parse.quote(text)}"
 
 # ==========================================
-# 🔐 登录界面 (汉化)
+# 🔐 登录界面
 # ==========================================
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'results' not in st.session_state: st.session_state['results'] = None
@@ -346,7 +355,6 @@ with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", width=180)
     st.markdown(f"👋 **{st.session_state['real_name']}**")
     
-    # 菜单汉化
     menu = st.radio("导航菜单", ["🚀 客户开发 (Workbench)", "📂 历史记录 (History)", "📊 管理后台 (Admin)"] if st.session_state['role']=='admin' else ["🚀 客户开发 (Workbench)", "📂 历史记录 (History)"])
     st.divider()
     if st.button("🚪 退出登录"): st.session_state.clear(); st.rerun()
@@ -354,7 +362,7 @@ with st.sidebar:
 # 1. Workbench
 if "Workbench" in str(menu):
     st.title("🚀 智能获客工作台")
-    st.caption("AI 驱动的供应链客户挖掘系统 | v47.0 Pro")
+    st.caption("AI 驱动的供应链客户挖掘系统 | v49.0 Pro")
     
     with st.expander("📂 导入数据 (Excel/CSV)", expanded=st.session_state['results'] is None):
         up_file = st.file_uploader("选择文件", type=['xlsx', 'csv'])
@@ -368,10 +376,9 @@ if "Workbench" in str(menu):
                 with c2: l_col = st.selectbox("选择【店铺链接】列 (AI分析用)", range(len(df.columns)), 0)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🚀 启动 AI 引擎 (Start Engine)"):
+                if st.button("🚀 启动 AI 引擎"):
                     client = OpenAI(api_key=OPENAI_KEY)
                     
-                    # Extract
                     raw_phones = set()
                     row_map = {}
                     bar = st.progress(0)
@@ -385,7 +392,6 @@ if "Workbench" in str(menu):
                     
                     if not raw_phones: st.error("❌ 未发现任何号码"); st.stop()
                     
-                    # Verify
                     status_map = process_checknumber_task(list(raw_phones), CN_KEY, CN_USER)
                     valid_phones = [p for p in raw_phones if status_map.get(p) == 'valid']
                     
@@ -453,7 +459,7 @@ elif "History" in str(menu):
     if not df_leads.empty:
         st.dataframe(df_leads[['created_at', 'shop_name', 'phone', 'ai_message']], use_container_width=True)
         csv = df_leads.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 导出 CSV", csv, "my_leads.csv", "text/csv")
+        st.download_button("📥 导出 Excel/CSV", csv, "my_leads.csv", "text/csv")
     else: st.info("暂无记录")
 
 # 3. Admin
