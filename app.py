@@ -12,10 +12,16 @@ import os
 import hashlib
 import datetime
 from bs4 import BeautifulSoup 
-from supabase import create_client, Client
 
 # 忽略 SSL 警告
 warnings.filterwarnings("ignore")
+
+# 尝试导入 supabase，如果失败则标记
+try:
+    from supabase import create_client, Client
+    SUPABASE_INSTALLED = True
+except ImportError:
+    SUPABASE_INSTALLED = False
 
 # ==========================================
 # 🔧 988 Group 系统配置
@@ -26,21 +32,40 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ Supabase 云数据库连接
+# ☁️ Supabase 连接与诊断
 # ==========================================
 @st.cache_resource
 def init_supabase():
-    # 尝试从 Secrets 读取，如果没有则报错
+    # 1. 检查库是否安装
+    if not SUPABASE_INSTALLED:
+        return "Library Error: 'supabase' module not found. Please add 'supabase' to requirements.txt"
+    
+    # 2. 检查 Secrets 是否配置
+    if "SUPABASE_URL" not in st.secrets:
+        return "Config Error: 'SUPABASE_URL' is missing in Streamlit Secrets."
+    if "SUPABASE_KEY" not in st.secrets:
+        return "Config Error: 'SUPABASE_KEY' is missing in Streamlit Secrets."
+        
+    # 3. 尝试连接
     try:
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets["SUPABASE_KEY"]
         return create_client(url, key)
-    except:
-        return None
+    except Exception as e:
+        return f"Connection Error: {str(e)}"
 
-supabase: Client = init_supabase()
+# 初始化
+conn_result = init_supabase()
 
-# --- 数据库操作函数 ---
+# 判断连接结果
+if isinstance(conn_result, str): # 如果返回的是错误字符串
+    supabase = None
+    db_error_msg = conn_result
+else:
+    supabase = conn_result
+    db_error_msg = None
+
+# --- 数据库操作函数 (带空值保护) ---
 
 def login_user(u, p):
     if not supabase: return None
@@ -48,7 +73,7 @@ def login_user(u, p):
     try:
         response = supabase.table('users').select("*").eq('username', u).eq('password', pwd_hash).execute()
         if response.data:
-            return response.data[0] # 返回用户字典
+            return response.data[0] 
     except: pass
     return None
 
@@ -62,18 +87,16 @@ def create_user(u, p, n):
     except: return False
 
 def log_click_event(username, shop, phone, target):
-    """记录每一次点击行为 (监控核心)"""
     if not supabase: return
     try:
         data = {
             "username": username,
             "shop_name": shop,
             "phone": phone,
-            "target": target # 'whatsapp' or 'telegram'
+            "target": target 
         }
         supabase.table('clicks').insert(data).execute()
-    except Exception as e:
-        print(f"Log Error: {e}")
+    except: pass
 
 def save_task_history(username, fname, total, valid):
     if not supabase: return
@@ -89,19 +112,13 @@ def save_task_history(username, fname, total, valid):
 
 def get_admin_stats():
     if not supabase: return pd.DataFrame(), pd.DataFrame()
-    
-    # 获取点击数据
     try:
         clicks = supabase.table('clicks').select("*").execute()
         df_clicks = pd.DataFrame(clicks.data)
-        
-        # 获取任务数据
         tasks = supabase.table('history').select("*").execute()
         df_tasks = pd.DataFrame(tasks.data)
-        
         return df_clicks, df_tasks
-    except:
-        return pd.DataFrame(), pd.DataFrame()
+    except: return pd.DataFrame(), pd.DataFrame()
 
 # ==========================================
 # 🎨 UI Style
@@ -112,42 +129,25 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     html, body, [class*="css"] {font-family: 'Inter', sans-serif; background-color: #f0f2f6;}
-    
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     section[data-testid="stSidebar"] {background-color: #ffffff; border-right: 1px solid #e5e7eb;}
-    
-    /* 核心交互按钮 */
     div.stButton > button {
         background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
         color: white; border: none; padding: 0.6rem; border-radius: 8px; font-weight: 600; width: 100%;
         box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
     }
-    
-    /* 链接按钮样式 */
     .btn-link {
         display: block; padding: 10px; color: white !important; text-decoration: none !important;
-        border-radius: 8px; font-weight: 600; text-align: center; margin-top: 5px;
-        transition: opacity 0.2s;
+        border-radius: 8px; font-weight: 600; text-align: center; margin-top: 5px; transition: opacity 0.2s;
     }
-    .wa { background-color: #10b981; } 
-    .tg { background-color: #0ea5e9; }
-    
-    /* 警告框 */
-    .metric-card {
-        background: white; padding: 15px; border-radius: 10px; border: 1px solid #e2e8f0;
-        text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    .metric-num { font-size: 24px; font-weight: bold; color: #1e40af; }
-    .metric-label { font-size: 14px; color: #64748b; }
+    .wa { background-color: #10b981; } .tg { background-color: #0ea5e9; }
 </style>
 """, unsafe_allow_html=True)
 
 # === 核心逻辑 ===
 
 def extract_all_numbers(row_series):
-    # v32 核弹级提取
     txt = " ".join([str(val) for val in row_series if pd.notna(val)])
-    # 宽泛匹配 7,8,9 开头
     matches = re.findall(r'(?:^|\D)([789][\d\s\-\(\)]{9,16})(?:\D|$)', txt)
     candidates = []
     for raw in matches:
@@ -159,14 +159,11 @@ def extract_all_numbers(row_series):
         elif len(d) == 10 and d.startswith('9'):
             clean = '7' + d
         if clean: candidates.append(clean)
-    
-    # 补漏纯数字
     digs = re.findall(r'(?:^|\D)([789]\d{9,10})(?:\D|$)', txt)
     for raw in digs:
         if len(raw)==11 and raw.startswith('7'): candidates.append(raw)
         elif len(raw)==11 and raw.startswith('8'): candidates.append('7'+raw[1:])
         elif len(raw)==10 and raw.startswith('9'): candidates.append('7'+raw)
-        
     return list(set(candidates))
 
 def get_proxy_config(): return None
@@ -186,7 +183,6 @@ def process_checknumber_task(phone_list, api_key, user_id):
     if not phone_list: return {}
     status_map = {p: 'unknown' for p in phone_list}
     headers = {"X-API-Key": api_key, "User-Agent": "Mozilla/5.0"}
-    
     with st.status("📡 Cloud Verification...", expanded=True) as status:
         status.write(f"Checking {len(phone_list)} numbers...")
         try:
@@ -206,9 +202,7 @@ def process_checknumber_task(phone_list, api_key, user_id):
                 if poll.status_code == 200 and poll.json().get("status") in ["exported", "completed"]:
                     result_url = poll.json().get("result_url"); break
             except: pass
-        
         if not result_url: status.update(label="⚠️ Timeout", state="error"); return status_map
-            
         try:
             f = requests.get(result_url, verify=False)
             if f.status_code == 200:
@@ -220,10 +214,8 @@ def process_checknumber_task(phone_list, api_key, user_id):
                     ws = str(r.get('whatsapp') or r.get('status') or '').lower()
                     nm = re.sub(r'\D', '', str(r.get('number') or r.get('phone') or ''))
                     if "yes" in ws or "valid" in ws: 
-                        status_map[nm] = 'valid'
-                        cnt += 1
-                    else:
-                        status_map[nm] = 'invalid'
+                        status_map[nm] = 'valid'; cnt += 1
+                    else: status_map[nm] = 'invalid'
                 status.update(label=f"✅ Verified: {cnt} valid.", state="complete")
         except: pass
     return status_map
@@ -251,10 +243,14 @@ if not st.session_state['logged_in']:
             if os.path.exists("logo.png"): st.image("logo.png", width=200)
             else: st.markdown("## 🚛 988 Group CRM")
             
-            if not supabase:
-                st.error("❌ Database Connection Failed. Please configure Secrets.")
+            # === 诊断报错区 ===
+            if db_error_msg:
+                st.error("❌ Database Error")
+                st.code(db_error_msg)
+                st.info("Please check requirements.txt and Secrets.")
                 st.stop()
-                
+            # ==================
+            
             with st.form("login"):
                 u = st.text_input("Username")
                 p = st.text_input("Password", type="password")
@@ -263,7 +259,7 @@ if not st.session_state['logged_in']:
                     if user:
                         st.session_state.update({'logged_in':True, 'username':u, 'role':user['role'], 'real_name':user['real_name']})
                         st.rerun()
-                    else: st.error("Invalid Credentials")
+                    else: st.error("Invalid Credentials or Database Connection Failed")
     st.stop()
 
 # --- Internal ---
@@ -277,16 +273,13 @@ except:
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", width=160)
     st.write(f"👤 **{st.session_state['real_name']}**")
-    
     menu = st.radio("Menu", ["🚀 WorkBench", "📊 Supervision"] if st.session_state['role']=='admin' else ["🚀 WorkBench"])
-    
     st.divider()
     if st.button("Logout"): st.session_state['logged_in']=False; st.rerun()
 
 # 1. WorkBench
 if "WorkBench" in str(menu):
     st.title("🚀 Acquisition Workbench")
-    
     up_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'])
     
     if up_file:
@@ -296,7 +289,6 @@ if "WorkBench" in str(menu):
             df = df.astype(str)
         except: st.stop()
         
-        # 预览
         raw_preview = set()
         for _, r in df.iterrows():
             ext = extract_all_numbers(r)
@@ -310,7 +302,6 @@ if "WorkBench" in str(menu):
         if st.button("Start Processing"):
             client = OpenAI(api_key=OPENAI_KEY)
             
-            # Extract
             raw_phones = set()
             row_map = {}
             bar = st.progress(0)
@@ -324,18 +315,14 @@ if "WorkBench" in str(menu):
             
             if not raw_phones: st.error("No Numbers!"); st.stop()
             
-            # Verify
             status_map = process_checknumber_task(list(raw_phones), CN_KEY, CN_USER)
             
-            # Filter Valid Only
             valid_phones = [p for p in raw_phones if status_map.get(p) == 'valid']
-            
             if not valid_phones:
                 st.warning(f"Extracted {len(raw_phones)} numbers, but NONE were valid WhatsApp.")
                 save_task_history(st.session_state['username'], up_file.name, len(raw_phones), 0)
                 st.stop()
                 
-            # AI Gen
             final_data = []
             processed_rows = set()
             st.info(f"🧠 Generating for {len(valid_phones)} valid leads...")
@@ -346,94 +333,55 @@ if "WorkBench" in str(menu):
                 for rid in indices:
                     if rid in processed_rows: continue
                     processed_rows.add(rid)
-                    
                     row = df.iloc[rid]
-                    s_name = row[s_col]
-                    s_link = row[l_col]
+                    s_name = row[s_col]; s_link = row[l_col]
                     msg = get_ai_message(client, s_name, s_link, extract_web_content(s_link), st.session_state['real_name'])
-                    wa_link = make_wa_link(p, msg)
-                    tg_link = f"https://t.me/+{p}"
-                    
-                    final_data.append({
-                        "Shop": s_name, "Phone": p, "Msg": msg,
-                        "WA": wa_link, "TG": tg_link
-                    })
+                    wa_link = make_wa_link(p, msg); tg_link = f"https://t.me/+{p}"
+                    final_data.append({"Shop": s_name, "Phone": p, "Msg": msg, "WA": wa_link, "TG": tg_link})
                 ai_bar.progress((idx+1)/len(valid_phones))
             
-            # Save History to Supabase
             save_task_history(st.session_state['username'], up_file.name, len(raw_phones), len(valid_phones))
-            
-            # Display
             st.success(f"✅ Ready! {len(final_data)} High-Quality Leads.")
             
-            # Session State storage for buttons state
-            if 'unlocked_leads' not in st.session_state:
-                st.session_state['unlocked_leads'] = set()
+            if 'unlocked_leads' not in st.session_state: st.session_state['unlocked_leads'] = set()
 
             for i, item in enumerate(final_data):
                 with st.expander(f"🏢 {item['Shop']} (+{item['Phone']})"):
                     st.write(item['Msg'])
-                    
-                    # === 核心逻辑：解锁机制 (Click-to-Reveal) ===
                     lead_id = f"{item['Phone']}_{i}"
-                    
                     if lead_id in st.session_state['unlocked_leads']:
-                        # 已解锁状态：显示绿色按钮
                         c1, c2 = st.columns(2)
-                        with c1:
-                            st.markdown(f'<a href="{item["WA"]}" target="_blank" class="btn-link wa">🟢 Open WhatsApp</a>', unsafe_allow_html=True)
-                        with c2:
-                            st.markdown(f'<a href="{item["TG"]}" target="_blank" class="btn-link tg">🔵 Open Telegram</a>', unsafe_allow_html=True)
+                        with c1: st.markdown(f'<a href="{item["WA"]}" target="_blank" class="btn-link wa">🟢 Open WhatsApp</a>', unsafe_allow_html=True)
+                        with c2: st.markdown(f'<a href="{item["TG"]}" target="_blank" class="btn-link tg">🔵 Open Telegram</a>', unsafe_allow_html=True)
                     else:
-                        # 未解锁状态：显示“获取联系方式”按钮
                         if st.button(f"👆 Unlock Contact Info", key=f"unlock_{i}"):
-                            # 记录点击到 Supabase
                             log_click_event(st.session_state['username'], item['Shop'], item['Phone'], 'unlock')
-                            # 标记为已解锁
                             st.session_state['unlocked_leads'].add(lead_id)
-                            st.rerun() # 刷新页面显示按钮
+                            st.rerun()
 
-# 3. Supervision (Admin Only)
+# 3. Supervision
 elif "Supervision" in str(menu) and st.session_state['role'] == 'admin':
     st.title("📊 Team Performance")
-    
     df_clicks, df_tasks = get_admin_stats()
-    
     if not df_clicks.empty and not df_tasks.empty:
-        # 1. KPI Cards
-        total_leads = df_tasks['total_leads'].sum()
-        total_valid = df_tasks['valid_wa'].sum()
-        total_clicks = len(df_clicks)
-        
         k1, k2, k3 = st.columns(3)
-        k1.metric("Total Scanned", total_leads)
-        k2.metric("Valid Leads", total_valid)
-        k3.metric("Actual Contacts (Clicks)", total_clicks)
-        
+        k1.metric("Total Scanned", df_tasks['total_leads'].sum())
+        k2.metric("Valid Leads", df_tasks['valid_wa'].sum())
+        k3.metric("Actual Contacts", len(df_clicks))
         st.divider()
-        
-        # 2. 员工业绩榜 (Leaderboard)
-        st.subheader("🏆 Sales Leaderboard")
-        # 统计每个人的点击数
+        st.subheader("🏆 Leaderboard")
         leaderboard = df_clicks['username'].value_counts().reset_index()
         leaderboard.columns = ['Sales Rep', 'Customers Contacted']
         st.dataframe(leaderboard, use_container_width=True)
         st.bar_chart(leaderboard.set_index('Sales Rep'))
-        
-        # 3. 详细日志
-        with st.expander("📝 Detailed Click Logs"):
+        with st.expander("📝 Logs"):
             st.dataframe(df_clicks[['created_at', 'username', 'shop_name', 'phone']].sort_values('created_at', ascending=False), use_container_width=True)
-            
-    else:
-        st.info("No data yet.")
-        
+    else: st.info("No data yet.")
     st.divider()
     st.subheader("User Management")
     with st.form("new_user"):
         c1, c2, c3 = st.columns(3)
-        u = c1.text_input("Username")
-        p = c2.text_input("Password", type="password")
-        n = c3.text_input("Real Name")
+        u = c1.text_input("Username"); p = c2.text_input("Password", type="password"); n = c3.text_input("Real Name")
         if st.form_submit_button("Create User"):
             if create_user(u, p, n): st.success(f"User {u} created!")
             else: st.error("Failed")
