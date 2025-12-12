@@ -30,7 +30,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. UI 美化
+# 2. UI 美化 (HTML 按钮样式)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
@@ -41,15 +41,26 @@ st.markdown("""
     section[data-testid="stSidebar"] {background-color: #f4f6f9; border-right: 1px solid #e0e0e0;}
     h1 {color: #003366; font-weight: 700;}
     
-    /* 按钮优化 */
-    div.stButton > button {
-        border-radius: 6px; font-weight: 600; width: 100%;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    /* 自定义 HTML 按钮样式 */
+    .custom-btn {
+        display: inline-block;
+        padding: 8px 16px;
+        color: white !important;
+        text-decoration: none !important;
+        border-radius: 6px;
+        font-weight: 600;
+        text-align: center;
+        width: 100%;
+        transition: all 0.2s;
+        margin-top: 5px;
     }
-    div[data-testid="stExpander"] {
-        background: white; border: 1px solid #edf2f7; border-radius: 8px; margin-bottom: 8px;
-    }
-    a {text-decoration: none;}
+    .btn-wa { background-color: #25D366; } /* WhatsApp 绿 */
+    .btn-wa:hover { background-color: #128C7E; }
+    
+    .btn-tg { background-color: #0088cc; } /* Telegram 蓝 */
+    .btn-tg:hover { background-color: #006699; }
+    
+    .btn-disabled { background-color: #cccccc; cursor: not-allowed; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -60,8 +71,8 @@ with st.sidebar:
     else:
         st.markdown("## 🚛 **988 Group**")
         
-    st.markdown("### Omni-Channel Acquisition")
-    st.caption("v25.0: Stable Core")
+    st.markdown("### Omni-Channel System")
+    st.caption("v26.0: Bulletproof HTML Edition")
     
     try:
         default_cn_user = st.secrets["CN_USER_ID"]
@@ -74,9 +85,10 @@ with st.sidebar:
         default_openai = ""
         st.caption("⚠️ Local Mode")
 
-    with st.expander("🔧 System Config"):
+    with st.expander("🔧 Settings", expanded=True):
         use_proxy = st.checkbox("Enable Proxy", value=False)
         proxy_port = st.text_input("Proxy URL", value="http://127.0.0.1:10809")
+        # 允许用户修改 ID，防止 secrets 里填错
         check_user_id = st.text_input("CN User ID", value=default_cn_user)
         check_key = st.text_input("CN Key", value=default_cn_key, type="password")
         openai_key = st.text_input("OpenAI Key", value=default_openai, type="password")
@@ -89,7 +101,7 @@ def get_proxy_config():
 
 def extract_web_content(url):
     if not url or not isinstance(url, str) or "http" not in url: return None
-    headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "ru-RU"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
         resp = requests.get(url, headers=headers, timeout=5)
         if resp.status_code == 200:
@@ -104,13 +116,11 @@ def extract_web_content(url):
 
 def extract_all_numbers(row_series):
     full_text = " ".join([str(val) for val in row_series if pd.notna(val)])
-    matches_standard = re.findall(r'(\+?(?:7|8)(?:[\s\-\(\)]*\d){10})', full_text)
-    matches_short = re.findall(r'(?:\D|^)(9(?:[\s\-\(\)]*\d){9})(?:\D|$)', full_text)
-    all_raw_matches = matches_standard + matches_short
+    # 宽松正则：只要是7,8,9开头的10-11位数字都抓取
+    matches = re.findall(r'(?:^|\D)([789]\d{9,10})(?:\D|$)', full_text)
     
     candidates = []
-    for raw in all_raw_matches:
-        if isinstance(raw, tuple): raw = raw[0]
+    for raw in matches:
         digits = re.sub(r'\D', '', str(raw))
         clean_num = None
         if len(digits) == 11:
@@ -122,58 +132,115 @@ def extract_all_numbers(row_series):
     return list(set(candidates))
 
 def process_checknumber_task(phone_list):
+    """
+    带深度调试功能的验号模块
+    """
     if not phone_list: return set()
     valid_numbers_set = set()
     
     api_key = check_key.strip()
     user_id = check_user_id.strip()
-    if not api_key or not user_id: st.error("配置缺失"); return set()
+    if not api_key or not user_id: st.error("❌ 配置缺失: API Key 或 User ID 为空"); return set()
 
     headers = {"X-API-Key": api_key, "User-Agent": "Mozilla/5.0"}
     my_proxy_str = get_proxy_config()
     req_proxies = {"http": my_proxy_str, "https": my_proxy_str} if my_proxy_str else None
     
-    status_box = st.status("📡 Analyzing numbers...", expanded=True)
-    status_box.write(f"Checking {len(phone_list)} numbers via API...")
+    status_box = st.status("📡 Connecting to CheckNumber API...", expanded=True)
+    status_box.write(f"Uploading {len(phone_list)} numbers...")
     
+    # 1. Upload
     file_content = "\n".join(phone_list)
     files = {'file': ('input.txt', file_content, 'text/plain')}
     data_payload = {'user_id': user_id} 
+    
     try:
         resp = requests.post(CONFIG["CN_BASE_URL"], headers=headers, files=files, data=data_payload, proxies=req_proxies, timeout=30, verify=False)
+        
+        # === 调试点 1: 上传失败 ===
         if resp.status_code != 200:
-            status_box.update(label="❌ API Error (Skipping Check)", state="error")
-            return set(phone_list) 
-        task_id = resp.json().get("task_id")
-    except: return set(phone_list)
+            status_box.update(label="❌ Upload Failed", state="error")
+            st.error(f"API Error Code: {resp.status_code}")
+            st.code(resp.text) # 打印报错详情
+            return set() # 这里不返回假数据，直接中断，因为需要看报错
+            
+        task_data = resp.json()
+        task_id = task_data.get("task_id")
+        if not task_id:
+            st.error("No Task ID returned. Response:")
+            st.json(task_data)
+            return set()
+            
+    except Exception as e:
+        status_box.update(label="❌ Network Error", state="error")
+        st.error(f"Connection failed: {e}")
+        return set()
 
+    # 2. Polling
     status_url = f"{CONFIG['CN_BASE_URL']}/{task_id}"
     result_url = None
-    for i in range(80):
+    
+    for i in range(40):
         try:
             time.sleep(3)
+            # GET 请求通常不需要 body，user_id 拼在 URL 参数里
             poll_resp = requests.get(status_url, headers=headers, params={'user_id': user_id}, proxies=req_proxies, timeout=30, verify=False)
+            
             if poll_resp.status_code == 200:
                 p_data = poll_resp.json()
                 status = p_data.get("status")
-                if status in ["exported", "completed"]: result_url = p_data.get("result_url"); break
+                
+                # 进度展示
+                done = p_data.get("success", 0) + p_data.get("failure", 0)
+                total = p_data.get("total", 1)
+                status_box.write(f"Processing... {done}/{total} (Status: {status})")
+                
+                if status in ["exported", "completed"]:
+                    result_url = p_data.get("result_url")
+                    break
+            elif poll_resp.status_code == 401:
+                 st.error("❌ Polling Unauthorized (401). Check User ID.")
+                 st.stop()
         except: pass
             
-    if not result_url: return set(phone_list)
+    if not result_url: 
+        status_box.update(label="❌ Verification Timeout", state="error")
+        # 超时的情况，为了不阻断业务，我们把所有号码当做有效返回（降级策略）
+        st.warning("⚠️ 验号超时，系统将显示所有号码供尝试。")
+        return set(phone_list)
         
+    # 3. Download & Parse
     try:
+        status_box.write("Downloading report...")
         f_resp = requests.get(result_url, proxies=req_proxies, verify=False)
+        
         if f_resp.status_code == 200:
+            # 尝试解析
             try: res_df = pd.read_excel(io.BytesIO(f_resp.content))
             except: res_df = pd.read_csv(io.BytesIO(f_resp.content))
+            
             res_df.columns = [c.lower() for c in res_df.columns]
+            
+            # === 调试点 2: 结果预览 ===
+            # st.write("API Result Preview:", res_df.head()) # 调试用
+            
             for _, r in res_df.iterrows():
                 ws = str(r.get('whatsapp') or r.get('status') or '').lower()
                 num = str(r.get('number') or r.get('phone') or '')
                 cn = re.sub(r'\D', '', num)
-                if "yes" in ws or "valid" in ws: valid_numbers_set.add(cn)
-            status_box.update(label=f"✅ Found {len(valid_numbers_set)} active WA accounts", state="complete")
-    except: pass
+                
+                # 宽松匹配
+                if "yes" in ws or "valid" in ws or "true" in ws:
+                    valid_numbers_set.add(cn)
+                    
+            status_box.update(label=f"✅ Analysis Complete: Found {len(valid_numbers_set)} valid numbers", state="complete")
+        else:
+            st.error(f"Download failed: {f_resp.status_code}")
+            
+    except Exception as e:
+        status_box.update(label="❌ Parse Error", state="error")
+        st.error(str(e))
+
     return valid_numbers_set
 
 def get_ai_message_premium(client, shop_name, shop_link, web_content, rep_name):
@@ -184,22 +251,17 @@ def get_ai_message_premium(client, shop_name, shop_link, web_content, rep_name):
     if web_content: source_info += f"\nScraped Page Content: {web_content}"
     
     prompt = f"""
-    Role: Business Development Manager at "988 Group" (China).
-    Sender: "{rep_name}". Target: Ozon Seller "{shop_name}".
-    Source Info: {source_info}
-    
-    Context: 988 Group = Supply Chain Partner (Sourcing + Logistics to Russia).
-    
-    Task: Write a polite Russian message for WhatsApp/Telegram.
-    
+    Role: Business Manager at "988 Group" (China).
+    Sender: "{rep_name}". Target: "{shop_name}".
+    Source: {source_info}
+    Context: 988 Group = Sourcing + Logistics to Russia.
+    Task: Polite Russian WhatsApp intro.
     Structure:
-    1. Greeting: "Здравствуйте, [Shop Name]! Меня зовут {rep_name} (988 Group)."
-    2. Hook: "Saw your [Niche] store on Ozon..."
-    3. Value: "We help source these items + handle shipping/customs to Moscow."
-    4. CTA: "Catalog/Quote?"
-    5. Sign-off: "С уважением, {rep_name}."
-    
-    Constraint: Native Russian, <50 words.
+    1. "Здравствуйте, [Name]! Меня зовут {rep_name} (988 Group)."
+    2. "Saw your store..."
+    3. "We supply [Niche] items + shipping/customs to Russia."
+    4. "Catalog?"
+    Output: Russian text only.
     """
     try:
         response = client.chat.completions.create(
@@ -220,7 +282,7 @@ def make_tg_link(phone):
 # === 主程序界面 ===
 
 st.markdown("### 🚀 988 Group Omni-Channel System")
-st.markdown("WhatsApp & Telegram Automated Outreach")
+st.markdown("Automated Lead Generation (v26.0 HTML Edition)")
 st.markdown("---")
 
 uploaded_file = st.file_uploader("📂 Upload Lead List (Excel/CSV)", type=['xlsx', 'csv'])
@@ -244,7 +306,7 @@ if uploaded_file:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if st.button("🚀 START DUAL-CHANNEL ENGINE", type="primary"):
+    if st.button("🚀 START ENGINE", type="primary"):
         if not rep_name: st.error("⚠️ Enter your name!"); st.stop()
         
         my_proxy_str = get_proxy_config()
@@ -277,17 +339,24 @@ if uploaded_file:
         # 2. 验号
         wa_valid_set = process_checknumber_task(list(all_raw_phones))
         
-        # 3. AI 生成 & 结果呈现
+        # 3. AI 生成
         st.markdown("---")
-        st.success(f"✅ Ready! Validated {len(wa_valid_set)} WA numbers. Generating dual links...")
+        
+        # 如果 WA 验号全挂了，我们还是生成结果（基于提取到的号码），这样至少能发 Telegram
+        # 我们把所有提取到的号码都列出来
+        target_phones = sorted(list(all_raw_phones))
+        
+        if not target_phones:
+            st.error("Fatal Error: No numbers to process.")
+            st.stop()
+            
+        st.success(f"✅ Processing {len(target_phones)} leads...")
         
         final_results = []
-        sorted_numbers = sorted(list(all_raw_phones))
         processed_rows = set()
-        
         ai_bar = st.progress(0)
         
-        for idx_step, p in enumerate(sorted_numbers):
+        for idx_step, p in enumerate(target_phones):
             row_indices = phone_to_rows[p]
             for r_idx in row_indices:
                 if r_idx in processed_rows: continue
@@ -300,7 +369,9 @@ if uploaded_file:
                 web_content = extract_web_content(shop_link)
                 ai_msg = get_ai_message_premium(client, shop_name, shop_link, web_content, rep_name)
                 
-                wa_link = make_wa_link(p, ai_msg) if p in wa_valid_set else None
+                # 链接生成
+                is_wa_valid = p in wa_valid_set
+                wa_link = make_wa_link(p, ai_msg)
                 tg_link = make_tg_link(p)
                 
                 final_results.append({
@@ -308,31 +379,30 @@ if uploaded_file:
                     "Phone": p,
                     "AI Message": ai_msg,
                     "WA_Link": wa_link,
-                    "TG_Link": tg_link
+                    "TG_Link": tg_link,
+                    "Is_WA": is_wa_valid
                 })
-            ai_bar.progress((idx_step+1)/len(sorted_numbers))
+            ai_bar.progress((idx_step+1)/len(target_phones))
             
-        st.subheader("🎯 Dual-Channel Leads")
+        st.subheader("🎯 Qualified Leads")
         
-        # === 核心修复：移除不稳定的 use_container_width 参数 ===
-        for i, item in enumerate(final_results):
+        # === 核心：使用 HTML 渲染按钮 (彻底解决 Streamlit 报错) ===
+        for item in final_results:
             with st.expander(f"🏢 {item['Shop Name']} (+{item['Phone']})"):
                 st.write(f"**Draft:** {item['AI Message']}")
                 
-                c_wa, c_tg = st.columns(2)
+                c1, c2 = st.columns(2)
                 
-                with c_wa:
-                    if item['WA_Link']:
-                        # 移除 use_container_width
-                        st.link_button(f"🟢 WhatsApp", item['WA_Link'], key=f"wa_{i}")
+                # WhatsApp 按钮
+                with c1:
+                    if item['Is_WA']:
+                        # 绿色可用按钮
+                        st.markdown(f'<a href="{item["WA_Link"]}" target="_blank" class="custom-btn btn-wa">🟢 WhatsApp</a>', unsafe_allow_html=True)
                     else:
-                        st.button(f"⚪ No WhatsApp", disabled=True, key=f"nowa_{i}")
+                        # 灰色禁用按钮
+                        st.markdown(f'<a class="custom-btn btn-disabled">⚪ No WhatsApp</a>', unsafe_allow_html=True)
                 
-                with c_tg:
-                    try:
-                        # 增加 try-catch 保护
-                        st.link_button(f"🔵 Telegram", item['TG_Link'], key=f"tg_{i}")
-                    except Exception as e:
-                        st.error("Link Error")
-                    
+                # Telegram 按钮 (永远可用)
+                with c2:
+                    st.markdown(f'<a href="{item["TG_Link"]}" target="_blank" class="custom-btn btn-tg">🔵 Telegram</a>', unsafe_allow_html=True)
                     st.caption("Copy text first")
