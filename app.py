@@ -11,8 +11,8 @@ import io
 import os
 import hashlib
 import datetime
-import cloudscraper # 必须在 requirements.txt 里
 from bs4 import BeautifulSoup 
+import cloudscraper # 必须安装
 
 try:
     from supabase import create_client, Client
@@ -44,7 +44,7 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# 数据库操作函数 (保持不变)
+# 数据库函数
 def login_user(u, p):
     if not supabase: return None
     pwd_hash = hashlib.sha256(p.encode()).hexdigest()
@@ -89,97 +89,104 @@ def get_admin_stats():
         return c, l
     except: return pd.DataFrame(), pd.DataFrame()
 
+def get_user_leads_history(username):
+    if not supabase: return pd.DataFrame()
+    try:
+        res = supabase.table('leads').select("*").eq('username', username).order('created_at', desc=True).limit(200).execute()
+        return pd.DataFrame(res.data)
+    except: return pd.DataFrame()
+
 # ==========================================
-# 🎨 UI
+# 🎨 UI Style (蓝宝石极简)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="🚛")
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-    html, body, [class*="css"] {font-family: 'Inter', sans-serif; background-color: #f0f2f6;}
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    html, body, [class*="css"] {font-family: 'Inter', sans-serif; background-color: #f8f9fc;}
     
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     section[data-testid="stSidebar"] {background-color: #ffffff; border-right: 1px solid #e5e7eb;}
     
+    /* 主按钮 */
     div.stButton > button {
-        background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
-        color: white; border: none; padding: 0.6rem; border-radius: 8px; font-weight: 600; width: 100%;
-        box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
+        background: linear-gradient(135deg, #0052cc 0%, #003366 100%);
+        color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; 
+        font-weight: 600; font-size: 15px; box-shadow: 0 4px 12px rgba(0, 82, 204, 0.2); width: 100%;
     }
+    div.stButton > button:hover {transform: translateY(-2px); box-shadow: 0 8px 16px rgba(0, 82, 204, 0.3);}
     
+    /* HTML 按钮 (防崩) */
     .btn-action {
         display: block; padding: 8px 12px; color: white !important; text-decoration: none !important;
         border-radius: 6px; font-weight: 500; text-align: center; font-size: 14px; margin-bottom: 4px;
         transition: opacity 0.2s;
     }
+    .btn-action:hover { opacity: 0.9; }
     .wa-green { background-color: #10b981; } 
-    .wa-yellow { background-color: #f59e0b; }
     .tg-blue { background-color: #0ea5e9; } 
+    
+    /* 结果卡片 */
+    div[data-testid="stExpander"] {
+        background: white; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 10px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # === 核心逻辑 ===
 
 def extract_all_numbers(row_series):
-    txt = " ".join([str(val) for val in row_series if pd.notna(val)])
-    # 宽泛匹配
-    matches = re.findall(r'(?:^|\D)([789][\d\s\-\(\)]{9,16})(?:\D|$)', txt)
+    """
+    你指定的最佳提取逻辑
+    """
+    full_text = " ".join([str(val) for val in row_series if pd.notna(val)])
+    matches_standard = re.findall(r'(\+?(?:7|8)(?:[\s\-\(\)]*\d){10})', full_text)
+    matches_short = re.findall(r'(?:\D|^)(9(?:[\s\-\(\)]*\d){9})(?:\D|$)', full_text)
+    all_raw_matches = matches_standard + matches_short
     candidates = []
-    for raw in matches:
-        d = re.sub(r'\D', '', raw)
-        clean = None
-        if len(d) == 11:
-            if d.startswith('7'): clean = d
-            elif d.startswith('8'): clean = '7' + d[1:]
-        elif len(d) == 10 and d.startswith('9'): clean = '7' + d
-        if clean: candidates.append(clean)
-    # 补漏
-    digs = re.findall(r'(?:^|\D)([789]\d{9,10})(?:\D|$)', txt)
-    for raw in digs:
-        if len(raw)==11 and raw.startswith('7'): candidates.append(raw)
-        elif len(raw)==11 and raw.startswith('8'): candidates.append('7'+raw[1:])
-        elif len(raw)==10 and raw.startswith('9'): candidates.append('7'+raw)
+    for raw in all_raw_matches:
+        if isinstance(raw, tuple): raw = raw[0]
+        digits = re.sub(r'\D', '', str(raw))
+        clean_num = None
+        if len(digits) == 11:
+            if digits.startswith('7'): clean_num = digits
+            elif digits.startswith('8'): clean_num = '7' + digits[1:]
+        elif len(digits) == 10 and digits.startswith('9'):
+            clean_num = '7' + digits
+        if clean_num: candidates.append(clean_num)
     return list(set(candidates))
 
 def get_proxy_config(): return None
 
-# === 强力内容提取引擎 ===
+# === 绝杀文案引擎 (Killer Copy Engine) ===
 
 def get_niche_from_url(url):
-    """从URL中强行拆解出类目词"""
+    """暴力拆解 URL 获取类目"""
     if not url or "http" not in str(url): return ""
     try:
-        # 移除常见无用词
         stopwords = ['ozon', 'ru', 'com', 'seller', 'products', 'category', 'catalog', 'detail', 'html', 'https', 'www']
-        # 提取路径中的英文
         path = urllib.parse.urlparse(url).path
         clean_path = re.sub(r'[\/\-\_\.]', ' ', path)
         words = re.findall(r'[a-zA-Z]{3,}', clean_path)
         meaningful = [w for w in words if w.lower() not in stopwords]
-        return ", ".join(meaningful[:5]) # 取前5个关键词
+        return ", ".join(meaningful[:5])
     except: return ""
 
 def extract_web_content(url):
-    """尝试爬取，失败则返回URL关键词"""
+    """CloudScraper + URL Fallback"""
     content = ""
-    # 1. CloudScraper 尝试
     try:
         scraper = cloudscraper.create_scraper()
         resp = scraper.get(url, timeout=4)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             title = soup.title.string.strip() if soup.title else ""
-            desc = soup.find('meta', attrs={'name': 'description'})
-            d_txt = desc.get('content', '') if desc else ""
             if title: content += f"Page Title: {title}. "
-            if d_txt: content += f"Page Desc: {d_txt}. "
     except: pass
     
-    # 2. 无论爬取是否成功，强制加上URL分析结果
     url_niche = get_niche_from_url(url)
-    if url_niche:
-        content += f"URL Keywords (Strong Niche Indicators): {url_niche}. "
+    if url_niche: content += f"URL Keywords: {url_niche}. "
     
     return content if content else "General Store"
 
@@ -228,51 +235,39 @@ def process_checknumber_task(phone_list, api_key, user_id):
     return status_map
 
 def get_ai_message_killer(client, shop_name, shop_link, context_info, rep_name):
-    """
-    v40.0 绝杀文案引擎
-    """
-    # 预处理：如果 shop_name 是通用名，尝试修复
-    if shop_name.lower() in ['seller', 'store', 'shop', 'ozon']:
-        shop_name = "" # 让 AI 只要说 Hello
+    # 如果店名无效，置空让AI自己发挥
+    if shop_name.lower() in ['seller', 'store', 'shop', 'ozon', 'nan', '']: shop_name = ""
         
     prompt = f"""
     Role: Expert Sales Manager '{rep_name}' at 988 Group (China Supply Chain).
-    Target Store: "{shop_name}"
+    Target Store Name: "{shop_name}"
     Data Source: {context_info}
     
     MISSION: Write a HIGH-CONVERSION Russian WhatsApp message.
     
-    STRATEGY (Follow strictly):
-    1. **NICHE DETECTION**: Analyze 'Data Source' and 'Target Store' name. 
-       - If you see words like 'fishing', 'rod', 'fish' -> Niche is "Рыболовные товары" (Fishing Gear).
-       - If 'auto', 'car' -> "Автотовары" (Auto Parts).
-       - If 'baby', 'kids' -> "Детские товары" (Kids).
-       - **IF UNKNOWN**: Assume they are a 'Top Seller' and focus on "Bestsellers".
+    STRATEGY:
+    1. **NICHE DETECTION**: Analyze 'Data Source'. 
+       - 'fishing' -> "Рыболовные товары"
+       - 'auto' -> "Автотовары"
+       - 'baby' -> "Детские товары"
+       - **UNKNOWN**: Assume 'Top Seller'.
        
-    2. **THE HOOK (No boring intros!)**: 
-       - BAD: "We are a factory." (Boring!)
-       - GOOD (Niche Known): "Здравствуйте! Увидела ваш магазин на Ozon, у вас отличный выбор [NICHE]!"
-       - GOOD (Niche Unknown): "Здравствуйте! Изучила ваш ассортимент на Ozon — вижу, что вы активно растете в топе."
+    2. **HOOK**: 
+       - "Здравствуйте! Увидела ваш магазин на Ozon, отличный выбор [NICHE]!"
+       - (If unknown niche): "Здравствуйте! Изучила ваш ассортимент на Ozon..."
        
-    3. **THE OFFER (Pain Points)**:
-       - "We (988 Group) help top sellers source [NICHE] directly from China factories 15-20% cheaper."
-       - "Plus, we handle all logistics & customs to Moscow (Карго/Белая)."
+    3. **OFFER**:
+       - "We (988 Group) help source [NICHE] directly from China factories 15-20% cheaper."
+       - "We handle Logistics/Customs to Moscow."
        
-    4. **CALL TO ACTION**:
-       - "Can I send you a price calculation for your top items?"
+    4. **CTA**:
+       - "Can I send a price calculation?"
     
-    FORMAT:
-    - Language: Natural, Business Russian.
-    - Length: Short (under 50 words).
-    - Tone: Confident, Helpful, Human.
+    Constraint: Native Russian. <50 words.
     """
-    
     try:
         response = client.chat.completions.create(
-            model="gpt-4o", # 必须用 GPT-4o 才有这种推理能力
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.8, # 提高创造性，避免死板
-            max_tokens=350
+            model="gpt-4o", messages=[{"role": "user", "content": prompt}], temperature=0.8, max_tokens=300
         )
         return response.choices[0].message.content.strip()
     except:
@@ -312,7 +307,7 @@ if not st.session_state['logged_in']:
                     else: st.error("Invalid Credentials")
     st.stop()
 
-# --- Sidebar ---
+# --- Internal ---
 try:
     CN_USER = st.secrets["CN_USER_ID"]
     CN_KEY = st.secrets["CN_API_KEY"]
@@ -365,7 +360,7 @@ if "WorkBench" in str(menu):
                     valid_phones = [p for p in raw_phones if status_map.get(p) == 'valid']
                     
                     if not valid_phones:
-                        st.warning(f"Extracted {len(raw_phones)} numbers, none valid.")
+                        st.warning(f"Extracted {len(raw_phones)} numbers, but NONE were valid WhatsApp.")
                         save_leads_to_db(st.session_state['username'], [])
                         st.stop()
                         
@@ -383,7 +378,7 @@ if "WorkBench" in str(menu):
                             s_name = row[s_col]
                             s_link = row[l_col]
                             
-                            # === 核心：调用绝杀文案引擎 ===
+                            # === 绝杀引擎 ===
                             context = extract_web_content(s_link) 
                             msg = get_ai_message_killer(client, s_name, s_link, context, st.session_state['real_name'])
                             
@@ -406,14 +401,17 @@ if "WorkBench" in str(menu):
 
         for i, item in enumerate(st.session_state['results']):
             with st.expander(f"🏢 {item['Shop']} (+{item['Phone']})"):
-                st.info(item['Msg']) # 显示生成的文案
-                st.caption(f"Source: {item['Link']}") # 显示来源链接，方便核对
+                st.info(item['Msg']) 
+                st.caption(f"Source: {item['Link']}") 
                 
                 lead_id = f"{item['Phone']}_{i}"
                 if lead_id in st.session_state['unlocked_leads']:
                     c1, c2 = st.columns(2)
-                    with c1: st.markdown(f'<a href="{item["WA"]}" target="_blank" class="btn-action wa-green">🟢 Open WhatsApp</a>', unsafe_allow_html=True)
-                    with c2: st.markdown(f'<a href="{item["TG"]}" target="_blank" class="btn-action tg-blue">🔵 Open Telegram</a>', unsafe_allow_html=True)
+                    with c1: 
+                        # HTML Button (Crash Proof)
+                        st.markdown(f'<a href="{item["WA"]}" target="_blank" class="btn-action wa-green">🟢 WhatsApp</a>', unsafe_allow_html=True)
+                    with c2: 
+                        st.markdown(f'<a href="{item["TG"]}" target="_blank" class="btn-action tg-blue">🔵 Telegram</a>', unsafe_allow_html=True)
                 else:
                     if st.button(f"👆 Unlock Info", key=f"ul_{i}"):
                         log_click_event(st.session_state['username'], item['Shop'], item['Phone'], 'unlock')
@@ -423,15 +421,12 @@ if "WorkBench" in str(menu):
 # 2. History
 elif "History" in str(menu):
     st.title("📂 My History")
-    try:
-        res = supabase.table('leads').select("*").eq('username', st.session_state['username']).order('created_at', desc=True).limit(200).execute()
-        df_hist = pd.DataFrame(res.data)
-        if not df_hist.empty:
-            st.dataframe(df_hist[['created_at', 'shop_name', 'phone', 'ai_message']], use_container_width=True)
-            csv = df_hist.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 Export CSV", csv, "my_leads.csv", "text/csv")
-        else: st.info("No history.")
-    except: st.error("DB Error")
+    df_leads = get_user_leads_history(st.session_state['username'])
+    if not df_leads.empty:
+        st.dataframe(df_leads[['created_at', 'shop_name', 'phone', 'ai_message']], use_container_width=True)
+        csv = df_leads.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📥 Export CSV", csv, "my_leads.csv", "text/csv")
+    else: st.info("No history.")
 
 # 3. Admin
 elif "Admin" in str(menu) and st.session_state['role'] == 'admin':
@@ -439,7 +434,7 @@ elif "Admin" in str(menu) and st.session_state['role'] == 'admin':
     df_clicks, df_leads = get_admin_stats()
     if not df_clicks.empty:
         k1, k2 = st.columns(2)
-        k1.metric("Total Leads", len(df_leads))
+        k1.metric("Total Valid Leads", len(df_leads))
         k2.metric("Total Unlocks", len(df_clicks))
         st.subheader("Leaderboard")
         lb = df_clicks['username'].value_counts().reset_index()
