@@ -96,21 +96,20 @@ def get_user_leads_history(username):
     except: return pd.DataFrame()
 
 # ==========================================
-# 🎨 极光深空 UI (Aurora Deep Space)
+# 🎨 高对比度深空 UI (High Contrast Space)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="🚛")
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
     
-    /* === 核心：极光流体背景 (高对比度) === */
+    /* === 1. 背景：保留流光，但加深色调 === */
     .stApp {
-        background: linear-gradient(-45deg, #020024, #090979, #1e3a8a, #0093E9);
+        background: linear-gradient(-45deg, #000000, #0a0a23, #141e30, #000000);
         background-size: 400% 400%;
-        animation: gradientBG 10s ease infinite; /* 加快速度，增强动感 */
+        animation: gradientBG 12s ease infinite;
         font-family: 'Inter', sans-serif;
-        color: #e2e8f0;
     }
     
     @keyframes gradientBG {
@@ -119,63 +118,77 @@ st.markdown("""
         100% { background-position: 0% 50%; }
     }
     
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
-    
-    /* === 侧边栏：深邃磨砂 === */
+    /* === 2. 侧边栏：纯黑磨砂 === */
     section[data-testid="stSidebar"] {
-        background-color: rgba(2, 6, 23, 0.9); /* 接近纯黑 */
-        border-right: 1px solid rgba(255, 255, 255, 0.1);
-        backdrop-filter: blur(20px);
+        background-color: #050505;
+        border-right: 1px solid #333;
     }
     
-    /* === 卡片升级：深色遮光玻璃 (解决看不清字的问题) === */
+    /* === 3. 卡片优化：去雾化，高对比 === */
     div[data-testid="stExpander"], div[data-testid="stForm"], .login-card {
-        background: rgba(15, 23, 42, 0.75) !important; /* 加深背景色，提高对比度 */
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.15); /* 边框更亮一点 */
+        background-color: rgba(10, 15, 30, 0.95) !important; /* 几乎不透明的深蓝黑 */
+        border: 1px solid rgba(100, 200, 255, 0.2); /* 亮青色边框，增加轮廓感 */
         border-radius: 12px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8); /* 强阴影，让卡片浮起来 */
         color: #ffffff !important;
         margin-bottom: 16px;
     }
     
-    /* 文字颜色强制修正 */
-    p, span, div, label { color: #e2e8f0 !important; }
-    h1, h2, h3, h4, strong { color: #ffffff !important; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+    /* === 4. 字体颜色修正：拒绝灰色，拥抱纯白 === */
+    /* 普通文本 */
+    p, li, span, div {
+        color: #ffffff !important;
+        font-weight: 500 !important; /* 稍微加粗，防虚 */
+        text-shadow: 0 1px 2px rgba(0,0,0,0.8); /* 文字阴影，防背景干扰 */
+    }
+    /* 标题 */
+    h1, h2, h3, h4, strong {
+        color: #38bdf8 !important; /* 亮青色 */
+        font-weight: 700 !important;
+        letter-spacing: 0.5px;
+    }
+    /* 标签 */
+    label {
+        color: #94a3b8 !important;
+        font-weight: 600 !important;
+    }
     
-    /* === 按钮：赛博霓虹 === */
+    /* === 5. 按钮与输入框 === */
     div.stButton > button {
-        background: linear-gradient(90deg, #2563eb, #06b6d4);
+        background: linear-gradient(90deg, #2563eb, #0ea5e9);
         color: white; border: none; padding: 0.75rem; border-radius: 8px;
-        font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
-        box-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
+        font-weight: 700; text-transform: uppercase;
         border: 1px solid rgba(255,255,255,0.2);
-        transition: all 0.2s;
     }
     div.stButton > button:hover {
-        transform: scale(1.02);
-        box-shadow: 0 0 25px rgba(6, 182, 212, 0.7);
+        box-shadow: 0 0 20px rgba(14, 165, 233, 0.7);
+        border-color: #fff;
     }
     
-    /* HTML 按钮 */
-    .btn-action {
-        display: block; padding: 10px; color: white !important; text-decoration: none !important;
-        border-radius: 6px; font-weight: 600; text-align: center; margin-top: 5px;
-        transition: all 0.2s; border: 1px solid rgba(255,255,255,0.2);
-    }
-    /* 微信绿 */
-    .wa-green { background: linear-gradient(135deg, #059669 0%, #10b981 100%); }
-    .wa-green:hover { box-shadow: 0 0 15px #10b981; }
-    /* 电报蓝 */
-    .tg-blue { background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%); }
-    .tg-blue:hover { box-shadow: 0 0 15px #0ea5e9; }
-    
-    /* 输入框 */
+    /* 输入框：深底白字 */
     div[data-baseweb="input"] {
-        background-color: rgba(0, 0, 0, 0.5) !important;
-        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        background-color: #1e293b !important;
+        border: 1px solid #475569 !important;
+        color: white !important;
     }
+    input { color: white !important; font-weight: 600 !important; }
+    
+    /* 链接按钮 */
+    .btn-action {
+        display: block; padding: 12px; color: white !important; text-decoration: none !important;
+        border-radius: 8px; font-weight: 700; text-align: center; margin-top: 8px;
+        border: 1px solid rgba(255,255,255,0.1);
+        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    }
+    .wa-green { background: #059669; }
+    .wa-green:hover { background: #10b981; box-shadow: 0 0 15px #10b981; }
+    
+    .tg-blue { background: #0284c7; }
+    .tg-blue:hover { background: #0ea5e9; box-shadow: 0 0 15px #0ea5e9; }
+    
+    /* 隐藏杂项 */
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
+    
 </style>
 """, unsafe_allow_html=True)
 
@@ -223,7 +236,6 @@ def extract_web_content(url):
             title = soup.title.string.strip() if soup.title else ""
             if title: content += f"Title: {title}. "
     except: pass
-    
     url_niche = get_niche_from_url(url)
     if url_niche: content += f"URL Keywords: {url_niche}. "
     return content if content else "Unknown"
@@ -232,9 +244,7 @@ def process_checknumber_task(phone_list, api_key, user_id):
     if not phone_list: return {}
     status_map = {p: 'unknown' for p in phone_list}
     headers = {"X-API-Key": api_key, "User-Agent": "Mozilla/5.0"}
-    
-    # 汉化提示
-    with st.status("📡 正在进行云端验号...", expanded=True) as status:
+    with st.status("📡 正在连接云端验证...", expanded=True) as status:
         status.write(f"正在上传 {len(phone_list)} 个号码...")
         try:
             files = {'file': ('input.txt', "\n".join(phone_list), 'text/plain')}
@@ -253,9 +263,7 @@ def process_checknumber_task(phone_list, api_key, user_id):
                 if poll.status_code == 200 and poll.json().get("status") in ["exported", "completed"]:
                     result_url = poll.json().get("result_url"); break
             except: pass
-        
         if not result_url: status.update(label="⚠️ 验证超时", state="error"); return status_map
-            
         try:
             f = requests.get(result_url, verify=False)
             if f.status_code == 200:
@@ -339,7 +347,7 @@ with st.sidebar:
     st.markdown(f"👋 **{st.session_state['real_name']}**")
     
     # 菜单汉化
-    menu = st.radio("系统导航", ["🚀 客户开发 (Workbench)", "📂 历史记录 (History)", "📊 管理后台 (Admin)"] if st.session_state['role']=='admin' else ["🚀 客户开发 (Workbench)", "📂 历史记录 (History)"])
+    menu = st.radio("导航菜单", ["🚀 客户开发 (Workbench)", "📂 历史记录 (History)", "📊 管理后台 (Admin)"] if st.session_state['role']=='admin' else ["🚀 客户开发 (Workbench)", "📂 历史记录 (History)"])
     st.divider()
     if st.button("🚪 退出登录"): st.session_state.clear(); st.rerun()
 
@@ -360,7 +368,7 @@ if "Workbench" in str(menu):
                 with c2: l_col = st.selectbox("选择【店铺链接】列 (AI分析用)", range(len(df.columns)), 0)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🚀 启动 AI 引擎"):
+                if st.button("🚀 启动 AI 引擎 (Start Engine)"):
                     client = OpenAI(api_key=OPENAI_KEY)
                     
                     # Extract
@@ -445,7 +453,7 @@ elif "History" in str(menu):
     if not df_leads.empty:
         st.dataframe(df_leads[['created_at', 'shop_name', 'phone', 'ai_message']], use_container_width=True)
         csv = df_leads.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 导出 Excel/CSV", csv, "my_leads.csv", "text/csv")
+        st.download_button("📥 导出 CSV", csv, "my_leads.csv", "text/csv")
     else: st.info("暂无记录")
 
 # 3. Admin
