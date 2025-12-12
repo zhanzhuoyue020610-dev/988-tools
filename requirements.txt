@@ -4,4 +4,4 @@ openai
 requests
 httpx
 openpyxl
-xlsxwriter
+beautifulsoup4
