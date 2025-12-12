@@ -1,7 +1,3 @@
-+327
-Lines changed: 327 additions & 0 deletions
-Original file line number	Diff line number	Diff line change
-@@ -0,0 +1,327 @@
 import streamlit as st
 import pandas as pd
 import re
@@ -13,24 +9,26 @@ import httpx
 import time
 import io
 import os
+
 # 忽略 SSL 警告
 warnings.filterwarnings("ignore")
+
 # ==========================================
-# 🔧 988 Group 企业云端配置 (安全版)
+# 🔧 988 Group 云端配置
 # ==========================================
-# 这里不再写死 Key，而是从 Streamlit 云端保险箱读取
-# 这样代码上传到 GitHub 就是安全的
 CONFIG = {
     "PROXY_URL": None, # 云端无需代理
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks"
 }
-# 1. 页面基础设置
+
+# 1. 页面配置
 st.set_page_config(
     page_title="988 Group - 智能获客系统", 
     layout="wide", 
     page_icon="🚛"
 )
-# 2. 自定义 CSS
+
+# 2. CSS 美化
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
@@ -46,9 +44,15 @@ st.markdown("""
         border: none;
     }
     div.stButton > button:hover {background-color: #003380; color: white;}
-    div[data-testid="stExpander"] {border: 1px solid #e0e0e0; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);}
+    
+    /* 数据指标卡片 */
+    div[data-testid="stMetricValue"] {
+        font-size: 24px;
+        color: #004aad;
+    }
 </style>
 """, unsafe_allow_html=True)
+
 # === 侧边栏 ===
 with st.sidebar:
     if os.path.exists("logo.png"):
@@ -57,50 +61,69 @@ with st.sidebar:
         st.markdown("## 🚛 988 Group")
         
     st.markdown("### Intelligent Acquisition System")
-    st.caption("Status: Cloud Online 🟢")
-    
+    st.caption("Status: Cloud Online v20.0 🟢")
     st.divider()
     
-    # 获取密钥的逻辑：优先从云端 secrets 读取，读取不到则显示输入框
+    # 密钥读取逻辑
     try:
         default_cn_user = st.secrets["CN_USER_ID"]
         default_cn_key = st.secrets["CN_API_KEY"]
         default_openai = st.secrets["OPENAI_KEY"]
-        is_configured = True
     except FileNotFoundError:
-        # 如果是本地运行且没配置 secrets.toml，留空
         default_cn_user = ""
         default_cn_key = ""
         default_openai = ""
-        is_configured = False
-    with st.expander("⚙️ 开发者选项 (Admin)", expanded=False):
-        use_proxy = st.checkbox("开启网络代理 (本地调试用)", value=False)
+
+    with st.expander("⚙️ Admin Settings", expanded=False):
+        use_proxy = st.checkbox("开启代理 (本地调试)", value=False)
         proxy_port = st.text_input("代理地址", value="http://127.0.0.1:10809")
-        
-        # 如果云端配置了，这里就显示星号或隐藏
         check_user_id = st.text_input("User ID", value=default_cn_user)
         check_key = st.text_input("CN Key", value=default_cn_key, type="password")
         openai_key = st.text_input("OpenAI Key", value=default_openai, type="password")
+
 # === 核心函数 ===
+
 def get_proxy_config():
     if use_proxy and proxy_port: return proxy_port.strip()
     return None
+
 def extract_all_numbers(row_series):
+    """
+    v20.0 升级版提取算法：
+    使用正则模式匹配，而不是简单的 split。
+    能够识别带空格、括号、横杠的号码。
+    """
+    # 1. 拼接整行
     full_text = " ".join([str(val) for val in row_series if pd.notna(val)])
-    full_text = re.sub(r'[;,\t\n/]+', ' ', full_text)
-    digits_only = re.sub(r'[^\d]', ' ', full_text)
-    tokens = digits_only.split()
+    
     candidates = []
-    for token in tokens:
+    
+    # 2. 正则模式 A: 匹配 7 或 8 开头，后面跟着10个数字（允许中间有分隔符）
+    matches_standard = re.findall(r'(\+?(?:7|8)(?:[\s\-\(\)]*\d){10})', full_text)
+    
+    # 3. 正则模式 B: 匹配 9 开头的10位数字 (这是常见的简写)
+    matches_short = re.findall(r'(?:\D|^)(9(?:[\s\-\(\)]*\d){9})(?:\D|$)', full_text)
+    
+    # 合并结果
+    all_raw_matches = matches_standard + matches_short
+    
+    for raw in all_raw_matches:
+        # 统一清洗：去掉所有非数字
+        if isinstance(raw, tuple): raw = raw[0] # 处理正则分组
+        digits = re.sub(r'\D', '', str(raw))
+        
         clean_num = None
-        if len(token) == 11:
-            if token.startswith('7'): clean_num = token
-            elif token.startswith('8'): clean_num = '7' + token[1:]
-        elif len(token) == 10 and token.startswith('9'):
-            clean_num = '7' + token  
+        if len(digits) == 11:
+            if digits.startswith('7'): clean_num = digits
+            elif digits.startswith('8'): clean_num = '7' + digits[1:]
+        elif len(digits) == 10 and digits.startswith('9'):
+            clean_num = '7' + digits
+            
         if clean_num:
             candidates.append(clean_num)
+            
     return list(set(candidates))
+
 def process_checknumber_task(phone_list):
     if not phone_list: return set()
     valid_numbers_set = set()
@@ -109,14 +132,16 @@ def process_checknumber_task(phone_list):
     user_id = check_user_id.strip()
     
     if not api_key or not user_id:
-        st.error("❌ 缺少 API Key 或 User ID，请检查后台配置。")
+        st.error("❌ 缺少 API Key 或 User ID。")
         return set()
+
     headers = {"X-API-Key": api_key, "User-Agent": "Mozilla/5.0"}
     my_proxy_str = get_proxy_config()
     req_proxies = {"http": my_proxy_str, "https": my_proxy_str} if my_proxy_str else None
     
+    # === 创建任务 ===
     status_box = st.status("📡 正在连接验证服务器...", expanded=True)
-    status_box.write(f"正在提交 {len(phone_list)} 个号码...")
+    status_box.write(f"正在提交 {len(phone_list)} 个号码进行检测...")
     
     file_content = "\n".join(phone_list)
     files = {'file': ('input.txt', file_content, 'text/plain')}
@@ -131,15 +156,15 @@ def process_checknumber_task(phone_list):
         task_id = resp.json().get("task_id")
     except Exception as e:
         status_box.update(label="❌ 网络连接错误", state="error")
-        st.error(str(e))
         return set()
-    # Polling
+
+    # === 轮询 ===
     status_url = f"{CONFIG['CN_BASE_URL']}/{task_id}"
     result_url = None
     
-    for i in range(60):
+    for i in range(80): # 增加等待时间到 400秒，防止大文件超时
         try:
-            time.sleep(4)
+            time.sleep(5)
             poll_resp = requests.get(status_url, headers=headers, params={'user_id': user_id}, proxies=req_proxies, timeout=30, verify=False)
             if poll_resp.status_code == 200:
                 p_data = poll_resp.json()
@@ -147,7 +172,7 @@ def process_checknumber_task(phone_list):
                 done = p_data.get("success", 0) + p_data.get("failure", 0)
                 total = p_data.get("total", 1)
                 
-                status_box.write(f"验证进行中... 进度: {done}/{total} (Status: {status})")
+                status_box.write(f"CheckNumber 正在验证... 进度: {done}/{total} (Status: {status})")
                 
                 if status in ["exported", "completed"]:
                     result_url = p_data.get("result_url")
@@ -158,8 +183,9 @@ def process_checknumber_task(phone_list):
         status_box.update(label="❌ 验证超时", state="error")
         return set()
         
+    # === 下载 ===
     try:
-        status_box.write("正在下载分析报告...")
+        status_box.write("正在下载并分析报告...")
         f_resp = requests.get(result_url, proxies=req_proxies, verify=False)
         if f_resp.status_code == 200:
             try: res_df = pd.read_excel(io.BytesIO(f_resp.content))
@@ -170,12 +196,15 @@ def process_checknumber_task(phone_list):
                 ws = str(r.get('whatsapp') or r.get('status') or '').lower()
                 num = str(r.get('number') or r.get('phone') or '')
                 cn = re.sub(r'\D', '', num)
+                # 只要显示有效/存在/yes
                 if "yes" in ws or "valid" in ws:
                     valid_numbers_set.add(cn)
-            status_box.update(label=f"✅ 验证完成！发现 {len(valid_numbers_set)} 个有效客户", state="complete")
+            status_box.update(label=f"✅ 验证完成！发现 {len(valid_numbers_set)} 个 WA 活跃账号", state="complete")
     except Exception as e:
         status_box.update(label="❌ 解析错误", state="error")
+
     return valid_numbers_set
+
 def get_ai_message_988(client, shop_name, shop_link):
     if pd.isna(shop_name): shop_name = "Seller"
     if pd.isna(shop_link): shop_link = "Ozon Store"
@@ -200,7 +229,6 @@ def get_ai_message_988(client, shop_name, shop_link):
     Constraint: Native Russian, <40 words.
     Output: Russian text only.
     """
-    
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -211,12 +239,17 @@ def get_ai_message_988(client, shop_name, shop_link):
         return response.choices[0].message.content.strip()
     except Exception as e:
         return f"Здравствуйте, {shop_name}! Мы компания 988 Group. Занимаемся закупкой и доставкой. Интересно?"
+
 def make_wa_link(phone, text):
     return f"https://wa.me/{phone}?text={urllib.parse.quote(text)}"
+
 # === 主程序 ===
+
 st.title("988 Group 客户开发系统")
 st.markdown("##### 🚀 全自动采购与物流客户挖掘引擎")
+
 uploaded_file = st.file_uploader("📂 上传表格 (Excel/CSV)", type=['xlsx', 'csv'])
+
 if uploaded_file:
     try:
         if uploaded_file.name.endswith('.csv'): df = pd.read_csv(uploaded_file, header=None)
@@ -229,16 +262,19 @@ if uploaded_file:
         st.info("👇 请帮助 AI 理解表格结构")
         c1, c2 = st.columns(2)
         with c1:
-            shop_col_idx = st.selectbox("🏷️ 店名在第几列?", range(len(df.columns)), index=1 if len(df.columns)>1 else 0)
+            shop_col_idx = st.selectbox("🏷️ 店名列", range(len(df.columns)), index=1 if len(df.columns)>1 else 0)
         with c2:
-            link_col_idx = st.selectbox("🔗 链接在第几列?", range(len(df.columns)), index=0)
+            link_col_idx = st.selectbox("🔗 链接列", range(len(df.columns)), index=0)
+
     st.markdown("---")
+
     if st.button("🚀 开始自动化作业 (988 Cloud)", type="primary"):
-        my_proxy_str = get_proxy_config()
         
+        # 1. 初始化 AI
+        my_proxy_str = get_proxy_config()
         if not openai_key:
-            st.error("❌ 未配置 OpenAI Key，请联系管理员在后台 Secrets 添加。")
-            st.stop()
+            st.error("❌ 未配置 OpenAI Key"); st.stop()
+
         client = None
         if my_proxy_str:
             try:
@@ -248,25 +284,38 @@ if uploaded_file:
             except: st.error("代理配置失败"); st.stop()
         else:
             client = OpenAI(api_key=openai_key)
-        # 1. 提取
+
+        # 2. 增强版提取
         all_raw_phones = set()
         phone_to_rows = {}
+        
+        st.caption("🔍 正在扫描表格中的每一个数字...")
+        scan_bar = st.progress(0)
+        
         for i, row in df.iterrows():
             extracted = extract_all_numbers(row)
             for p in extracted:
                 all_raw_phones.add(p)
                 if p not in phone_to_rows: phone_to_rows[p] = []
                 phone_to_rows[p].append(i)
-        
+            scan_bar.progress((i+1)/len(df))
+            
         if not all_raw_phones:
-            st.error("未发现号码")
+            st.error("表格中未发现号码。")
             st.stop()
-        # 2. 验号
+            
+        # 3. 验号
         valid_phones_set = process_checknumber_task(list(all_raw_phones))
         
-        # 3. 生成
+        # 4. 生成结果
         if valid_phones_set:
-            st.success("✅ 号码清洗完成，正在生成文案...")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("原始抓取", len(all_raw_phones))
+            col2.metric("✅ WA 有效", len(valid_phones_set))
+            rate = len(valid_phones_set)/len(all_raw_phones)*100
+            col3.metric("转化率", f"{rate:.1f}%")
+            
+            st.success("✅ 正在生成 988 Group 专属方案...")
             final_results = []
             valid_rows_indices = set()
             for p in valid_phones_set:
@@ -304,4 +353,4 @@ if uploaded_file:
             csv = res_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 下载 Excel", csv, "988_leads.csv", "text/csv")
         else:
-            st.warning("未发现有效号码")
+            st.warning("处理完成，但 CheckNumber 反馈所有号码均无效。")
