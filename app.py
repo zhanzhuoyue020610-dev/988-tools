@@ -101,7 +101,6 @@ def get_user_points(username):
 # --- 🔥 防崩溃 AI 调用逻辑 ---
 
 def get_daily_motivation(client):
-    # 强制离线模式开关
     if "motivation_quote" not in st.session_state:
         local_quotes = [
             "心有繁星，沐光而行。",
@@ -427,6 +426,7 @@ if not st.session_state['logged_in']:
         st.markdown("<br><br><br><br>", unsafe_allow_html=True)
         st.markdown('<div class="gemini-header" style="text-align:center;">988 集团客户管理系统</div>', unsafe_allow_html=True)
         st.markdown('<div class="warm-quote" style="text-align:center;">专业 · 高效 · 全球化</div>', unsafe_allow_html=True)
+        
         with st.form("login", border=False):
             u = st.text_input("账号", placeholder="请输入用户名")
             p = st.text_input("密码", type="password", placeholder="请输入密码")
@@ -493,7 +493,8 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
     # 🔥 调试面板：显示当前 Key 的状态 (仅管理员可见)
     with st.expander("🔑 API Key 调试器 (仅管理员可见)", expanded=False):
         st.write("如果下方显示错误，请去 Streamlit 后台 Secrets 更新 Key，并点击 Manage app -> Reboot 重启应用。")
-        st.code(f"当前读取到的 OpenAI Key 前缀: {OPENAI_KEY[:7] if OPENAI_KEY else '未读取到'}", language="text")
+        # 🔥 修正点：显示后 5 位，更方便核对
+        st.code(f"当前读取到的 OpenAI Key 后5位: {OPENAI_KEY[-5:] if OPENAI_KEY else '未读取到'}", language="text")
         
     frozen_count, frozen_leads = get_frozen_leads_count()
     if frozen_count > 0:
