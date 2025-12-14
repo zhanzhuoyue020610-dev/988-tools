@@ -556,3 +556,94 @@ elif selected_nav == "Workbench":
             use_container_width=True
         )
     else:
+        st.caption("暂无历史记录")
+
+# --- 📅 LOGS (Admin) ---
+elif selected_nav == "Logs":
+    st.markdown("#### 活动日志监控")
+    d = st.date_input("选择日期", date.today())
+    if d:
+        c, f = get_daily_logs(d.isoformat())
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("领取记录")
+            if not c.empty: st.dataframe(c, use_container_width=True)
+            else: st.caption("无数据")
+        with col2:
+            st.markdown("完成记录")
+            if not f.empty: st.dataframe(f, use_container_width=True)
+            else: st.caption("无数据")
+
+# --- 👥 TEAM (Admin) ---
+elif selected_nav == "Team":
+    users = pd.DataFrame(supabase.table('users').select("*").execute().data)
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        u = st.radio("员工列表", users['username'].tolist(), label_visibility="collapsed")
+        st.markdown("---")
+        with st.expander("新增员工"):
+            with st.form("new"):
+                nu = st.text_input("用户名"); np = st.text_input("密码", type="password"); nn = st.text_input("真实姓名")
+                if st.form_submit_button("创建账号"): create_user(nu, np, nn); st.rerun()
+    
+    with c2:
+        if u:
+            info = users[users['username']==u].iloc[0]
+            tc, td, hist = get_user_historical_data(u)
+            perf = get_user_daily_performance(u)
+            
+            st.markdown(f"### {info['real_name']}")
+            st.caption(f"账号: {info['username']} | 积分: {info.get('points', 0)} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
+            
+            k1, k2 = st.columns(2)
+            k1.metric("历史总领取", tc); k2.metric("历史总完成", td)
+            
+            t1, t2, t3 = st.tabs(["每日绩效", "详细清单", "账号设置"])
+            with t1:
+                if not perf.empty: st.bar_chart(perf); st.dataframe(perf, use_container_width=True)
+                else: st.caption("暂无数据")
+            with t2:
+                if not hist.empty: st.dataframe(hist, use_container_width=True)
+                else: st.caption("暂无数据")
+            with t3:
+                st.markdown("**危险操作**")
+                if st.button("删除账号并回收任务"): delete_user_and_recycle(u); st.rerun()
+
+# --- 📥 IMPORT (Admin) ---
+elif selected_nav == "Import":
+    pool = get_public_pool_count()
+    if pool < CONFIG["LOW_STOCK_THRESHOLD"]: st.error(f"库存告急警告：公共池仅剩 {pool} 个客户！")
+    else: st.metric("公共池库存", pool)
+    
+    with st.expander("每日归仓工具"):
+        if st.button("一键回收过期任务"):
+            n = recycle_expired_tasks(); st.success(f"已回收 {n} 个任务")
+            
+    st.markdown("---")
+    st.markdown("#### 批量进货")
+    f = st.file_uploader("上传文件 (CSV/Excel)", type=['csv', 'xlsx'])
+    if f:
+        df = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
+        st.caption(f"解析到 {len(df)} 行数据")
+        if st.button("开始清洗入库"):
+            client = OpenAI(api_key=OPENAI_KEY)
+            with st.status("正在处理...", expanded=True) as s:
+                df=df.astype(str); phones = set(); rmap = {}
+                for i, r in df.iterrows():
+                    for p in extract_all_numbers(r): phones.add(p); rmap.setdefault(p, []).append(i)
+                s.write(f"提取到 {len(phones)} 个独立号码")
+                plist = list(phones); valid = []
+                for i in range(0, len(plist), 500):
+                    batch = plist[i:i+500]; res = process_checknumber_task(batch, CN_KEY, CN_USER)
+                    valid.extend([p for p in batch if res.get(p)=='valid']); time.sleep(1)
+                s.write(f"有效号码 {len(valid)} 个，生成话术中...")
+                rows = []; bar = st.progress(0)
+                for idx, p in enumerate(valid):
+                    r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
+                    msg = get_ai_message_sniper(client, shp, lnk, "Sales")
+                    rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":msg})
+                    if len(rows)>=100: admin_bulk_upload_to_pool(rows); rows=[]
+                    bar.progress((idx+1)/len(valid))
+                if rows: admin_bulk_upload_to_pool(rows)
+                s.update(label="入库完成", state="complete")
+            time.sleep(1); st.rerun()
