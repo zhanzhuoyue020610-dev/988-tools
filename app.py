@@ -11,7 +11,7 @@ import os
 import hashlib
 import cloudscraper
 from bs4 import BeautifulSoup 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 try:
     from supabase import create_client, Client
@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore")
 # ==========================================
 CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
-    "DAILY_QUOTA": 25  # 🔥 硬性指标：每天25个
+    "DAILY_QUOTA": 25  # 每天限领额度
 }
 
 # ==========================================
@@ -52,7 +52,6 @@ def login_user(u, p):
     try:
         res = supabase.table('users').select("*").eq('username', u).eq('password', pwd_hash).execute()
         if res.data:
-            # 🔥 登录成功，更新最后上线时间
             supabase.table('users').update({'last_seen': datetime.now().isoformat()}).eq('username', u).execute()
             return res.data[0]
         return None
@@ -66,14 +65,25 @@ def create_user(u, p, n, role="sales"):
         return True
     except: return False
 
-def admin_update_user_password(username, new_password):
-    """管理员强制修改密码"""
+# --- 🔥 新增：删除用户并回收线索 ---
+def delete_user_and_recycle(username):
+    """删除业务员，并将其未完成的任务全部踢回公共池"""
     if not supabase: return False
     try:
-        pwd = hash_password(new_password)
-        supabase.table('users').update({"password": pwd}).eq("username", username).execute()
+        # 1. 查找该用户所有【未完成】的任务
+        # 逻辑：将 assigned_to 置空，状态重置，让其他人可以领
+        supabase.table('leads').update({
+            'assigned_to': None,
+            'assigned_at': None,
+            'is_contacted': False
+        }).eq('assigned_to', username).eq('is_contacted', False).execute()
+        
+        # 2. 删除用户
+        supabase.table('users').delete().eq('username', username).execute()
         return True
-    except: return False
+    except Exception as e:
+        print(f"Delete Error: {e}")
+        return False
 
 def admin_bulk_upload_to_pool(leads_data):
     if not supabase or not leads_data: return False
@@ -90,54 +100,83 @@ def admin_bulk_upload_to_pool(leads_data):
                 "assigned_at": None,
                 "is_contacted": False
             })
-        # 批量插入，分片处理防止超时
         chunk_size = 500
         for i in range(0, len(rows), chunk_size):
             supabase.table('leads').insert(rows[i:i+chunk_size]).execute()
         return True
-    except Exception as e:
-        print(e)
-        return False
+    except: return False
 
-def fetch_daily_leads(username):
+# --- 🔥 修改：主动领取逻辑 ---
+def claim_daily_tasks(username):
+    """业务员主动点击按钮领取任务"""
     today_str = date.today().isoformat()
-    # 1. 查询今日已拥有的任务
+    
+    # 1. 先看今天领没领够
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
+    
+    if current_count >= CONFIG["DAILY_QUOTA"]:
+        return existing, "full" # 已经满了
+    
     needed = CONFIG["DAILY_QUOTA"] - current_count
     
-    # 2. 如果不够25个，去池子里抓
-    if needed > 0:
-        pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').limit(needed).execute().data
-        if pool_leads:
-            ids_to_update = [x['id'] for x in pool_leads]
-            supabase.table('leads').update({'assigned_to': username, 'assigned_at': today_str}).in_('id', ids_to_update).execute()
-            existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
-    return existing
-
-def mark_lead_as_contacted(lead_id):
-    if not supabase: return
-    supabase.table('leads').update({'is_contacted': True}).eq('id', lead_id).execute()
-
-# --- 统计与分析函数 ---
-def get_user_stats(username):
-    """获取单个用户的详细统计数据"""
-    if not supabase: return {}
-    # 总分配
-    total = supabase.table('leads').select('id', count='exact').eq('assigned_to', username).execute().count
-    # 总完成
-    done = supabase.table('leads').select('id', count='exact').eq('assigned_to', username).eq('is_contacted', True).execute().count
-    # 最近7天记录
-    last_7_days = (datetime.now() - timedelta(days=7)).isoformat()
-    recent = supabase.table('leads').select('id', count='exact').eq('assigned_to', username).eq('is_contacted', True).gte('assigned_at', last_7_days).execute().count
+    # 2. 没满，去公池抢
+    pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').limit(needed).execute().data
     
-    return {"total": total, "done": done, "recent_7_days": recent}
+    if pool_leads:
+        ids_to_update = [x['id'] for x in pool_leads]
+        supabase.table('leads').update({'assigned_to': username, 'assigned_at': today_str}).in_('id', ids_to_update).execute()
+        # 再次拉取最新的
+        existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
+        return existing, "claimed"
+    else:
+        return existing, "empty" # 公池没货了
 
-def get_user_recent_leads(username, limit=10):
-    """获取用户最近处理的客户列表"""
-    if not supabase: return []
-    res = supabase.table('leads').select('shop_name, phone, is_contacted, assigned_at').eq('assigned_to', username).order('assigned_at', desc=True).limit(limit).execute()
-    return res.data
+def get_todays_leads(username):
+    """仅查看，不领取"""
+    today_str = date.today().isoformat()
+    return supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
+
+# --- 🔥 修改：防作弊完成逻辑 ---
+def mark_lead_complete_secure(lead_id):
+    if not supabase: return
+    now_iso = datetime.now().isoformat()
+    supabase.table('leads').update({
+        'is_contacted': True,
+        'completed_at': now_iso # 记录完成的具体时间
+    }).eq('id', lead_id).execute()
+
+# --- 🔥 新增：日志统计逻辑 ---
+def get_daily_logs(query_date):
+    """
+    获取指定日期的日志：
+    1. 领取记录 (assigned_at = date)
+    2. 处理记录 (completed_at = date)
+    """
+    if not supabase: return pd.DataFrame(), pd.DataFrame()
+    
+    # 1. 领取榜
+    # Supabase filter syntax for date match is tricky, using simple string match for assigned_at (YYYY-MM-DD)
+    raw_claims = supabase.table('leads').select('assigned_to, assigned_at').eq('assigned_at', query_date).execute().data
+    df_claims = pd.DataFrame(raw_claims)
+    if not df_claims.empty:
+        df_claim_summary = df_claims.groupby('assigned_to').size().reset_index(name='领取数量')
+    else:
+        df_claim_summary = pd.DataFrame(columns=['assigned_to', '领取数量'])
+        
+    # 2. 处理榜
+    # completed_at 是带时分的，需要范围查询
+    start_dt = f"{query_date}T00:00:00"
+    end_dt = f"{query_date}T23:59:59"
+    
+    raw_done = supabase.table('leads').select('assigned_to, completed_at').gte('completed_at', start_dt).lte('completed_at', end_dt).execute().data
+    df_done = pd.DataFrame(raw_done)
+    if not df_done.empty:
+        df_done_summary = df_done.groupby('assigned_to').size().reset_index(name='实际处理')
+    else:
+        df_done_summary = pd.DataFrame(columns=['assigned_to', '实际处理'])
+        
+    return df_claim_summary, df_done_summary
 
 # --- Helper Functions ---
 def extract_all_numbers(row_series):
@@ -163,8 +202,6 @@ def process_checknumber_task(phone_list, api_key, user_id):
         resp = requests.post(CONFIG["CN_BASE_URL"], headers=headers, files=files, data={'user_id': user_id}, verify=False)
         if resp.status_code != 200: return status_map
         task_id = resp.json().get("task_id")
-        
-        # 轮询直到完成
         for i in range(60): 
             time.sleep(2)
             poll = requests.get(f"{CONFIG['CN_BASE_URL']}/{task_id}", headers=headers, params={'user_id': user_id}, verify=False)
@@ -175,7 +212,6 @@ def process_checknumber_task(phone_list, api_key, user_id):
                     try: df = pd.read_excel(io.BytesIO(f.content))
                     except: df = pd.read_csv(io.BytesIO(f.content))
                     for _, r in df.iterrows():
-                        # 宽松匹配
                         ws = str(r.get('whatsapp') or r.get('status') or '').lower()
                         nm = re.sub(r'\D', '', str(r.get('number') or r.get('phone') or ''))
                         if "yes" in ws or "valid" in ws: status_map[nm] = 'valid'
@@ -215,9 +251,14 @@ st.markdown("""
         width: 100%; font-weight: bold;
     }
     
-    /* 表格样式修正 */
-    div[data-testid="stDataFrame"] div[role="grid"] { color: #e0e0e0 !important; }
-    
+    /* 禁用状态的按钮 */
+    button:disabled {
+        background-color: #555 !important;
+        border-color: #555 !important;
+        color: #aaa !important;
+        cursor: not-allowed;
+    }
+
     h1, h2, h3 { color: #fff !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -258,110 +299,162 @@ if st.button("Logout", key="logout_top"): st.session_state.clear(); st.rerun()
 # 顶部导航
 menu_options = ["Workbench"]
 if st.session_state['role'] == 'admin':
-    menu_options = ["Workbench", "Team", "Import"]
+    menu_options = ["Workbench", "Logs", "Team", "Import"]
 
 selected_nav = st.radio("Nav", menu_options, horizontal=True, label_visibility="collapsed")
 st.divider()
 
-# --- 💼 WORKBENCH (业务员 & 管理员都可见) ---
+# --- 💼 WORKBENCH (主动领取 + 防作弊) ---
 if selected_nav == "Workbench":
     st.markdown("### 🎯 今日任务看板")
     
-    # 1. 自动领任务
-    my_leads = fetch_daily_leads(st.session_state['username'])
-    
+    # 1. 查询今日已持有任务
+    my_leads = get_todays_leads(st.session_state['username'])
     total_task = CONFIG["DAILY_QUOTA"]
-    completed_count = sum([1 for x in my_leads if x.get('is_contacted')])
+    current_count = len(my_leads)
     
-    st.markdown(f"**今日硬性指标: {completed_count} / {total_task}**")
+    # 2. 状态提示 & 领取按钮
+    if current_count < total_task:
+        st.warning(f"⚠️ 你的任务未满！今日指标 {total_task} 个，当前持有 {current_count} 个。")
+        if st.button(f"📥 立即领取剩余 {total_task - current_count} 个任务"):
+            my_leads, status = claim_daily_tasks(st.session_state['username'])
+            if status == "empty": st.error("公池已被领空，请联系管理员补货！")
+            elif status == "full": st.success("任务已领满！")
+            else: st.success("领取成功！开始工作吧！")
+            st.rerun()
+    else:
+        st.success("✅ 今日任务已领满，请尽快处理。")
+
+    # 3. 进度条
+    completed_count = sum([1 for x in my_leads if x.get('is_contacted')])
     st.progress(min(completed_count / total_task, 1.0))
+    st.caption(f"进度: {completed_count} / {total_task}")
     
     tab_todo, tab_done = st.tabs(["🔥 待跟进", "✅ 已完成"])
     
     with tab_todo:
         to_do_items = [x for x in my_leads if not x.get('is_contacted')]
         if not to_do_items:
-            if len(my_leads) > 0: st.success("🎉 今日任务全部完成！")
-            else: st.info("暂无分配任务，请等待管理员进货。")
+            if current_count == 0: st.info("请先点击上方按钮领取任务。")
+            else: st.success("🎉 待办清空！")
             
         for item in to_do_items:
             with st.expander(f"🏢 {item['shop_name']} (+{item['phone']})", expanded=True):
                 st.info(item['ai_message'])
+                
                 c1, c2 = st.columns(2)
+                
+                # --- 防作弊逻辑核心 ---
+                # 使用 session_state 记录用户是否点击了链接
+                link_key = f"clicked_{item['id']}"
+                if link_key not in st.session_state: st.session_state[link_key] = False
+                
+                # 按钮1：跳转链接 (点击后解锁右侧按钮)
                 wa_url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
-                c1.markdown(f"<a href='{wa_url}' target='_blank' style='display:block;text-align:center;background:#25D366;color:white;padding:8px;border-radius:4px;text-decoration:none;'>WhatsApp</a>", unsafe_allow_html=True)
-                if c2.button("✅ 标记完成", key=f"d_{item['id']}"):
-                    mark_lead_as_contacted(item['id'])
-                    st.rerun()
+                
+                # 回调函数：记录点击状态
+                def on_link_click(lid=item['id']):
+                    st.session_state[f"clicked_{lid}"] = True
+
+                # 注意：Streamlit 的 Link Button 无法绑定回调，我们用这种方式模拟
+                # 我们展示一个链接，但是告诉用户必须点。
+                # 更好的方式：Check Button 或者先点按钮再显示链接。这里采用“先点按钮显示链接并解锁”
+                
+                if not st.session_state[link_key]:
+                    if c1.button("🔗 获取 WhatsApp 链接", key=f"lk_{item['id']}"):
+                        st.session_state[link_key] = True
+                        st.rerun()
+                    c2.button("🚫 请先获取链接", disabled=True, key=f"fake_{item['id']}")
+                else:
+                    # 已解锁状态
+                    c1.markdown(f"<a href='{wa_url}' target='_blank' style='display:block;text-align:center;background:#25D366;color:white;padding:10px;border-radius:4px;text-decoration:none;font-weight:bold;'>👉 点击跳转 WhatsApp</a>", unsafe_allow_html=True)
                     
+                    if c2.button("✅ 标记完成", key=f"done_{item['id']}"):
+                        mark_lead_complete_secure(item['id'])
+                        st.session_state.pop(link_key, None) # 清理状态
+                        st.rerun()
+
     with tab_done:
         done_items = [x for x in my_leads if x.get('is_contacted')]
-        st.table(pd.DataFrame(done_items, columns=['shop_name', 'phone', 'assigned_at']))
+        # 简单显示
+        if done_items:
+            df_done = pd.DataFrame(done_items)
+            df_done['completed_at'] = pd.to_datetime(df_done['completed_at']).dt.strftime('%H:%M')
+            st.dataframe(df_done[['shop_name', 'phone', 'completed_at']], use_container_width=True)
 
-# --- 👥 TEAM MANAGEMENT (管理员专属) ---
-elif selected_nav == "Team" and st.session_state['role'] == 'admin':
-    st.markdown("### 👥 团队全景档案")
+# --- 📅 LOGS (管理员 - 日志监控) ---
+elif selected_nav == "Logs" and st.session_state['role'] == 'admin':
+    st.markdown("### 📅 每日监控日志")
+    st.caption("独立于档案管理，监控每日团队的【领取量】和【实际工作量】。")
     
-    # 1. 获取所有用户列表
+    q_date = st.date_input("选择查询日期", date.today())
+    
+    if q_date:
+        df_claim, df_done = get_daily_logs(q_date.isoformat())
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### 📥 今日领取榜")
+            if not df_claim.empty:
+                st.dataframe(df_claim, use_container_width=True)
+            else: st.info("今日无人领取")
+            
+        with c2:
+            st.markdown("#### ✅ 今日实干榜")
+            if not df_done.empty:
+                st.dataframe(df_done, use_container_width=True)
+            else: st.info("今日无人完成任务")
+
+# --- 👥 TEAM (管理员 - 删除与回收) ---
+elif selected_nav == "Team" and st.session_state['role'] == 'admin':
+    st.markdown("### 👥 团队管理")
+    
     users_raw = supabase.table('users').select("*").execute().data
     df_users = pd.DataFrame(users_raw)
     
-    # 左侧列表，右侧详情
     c_list, c_detail = st.columns([1, 2])
     
     with c_list:
         st.markdown("#### 员工列表")
-        selected_username = st.radio("选择员工查看详情", df_users['username'].tolist())
+        selected_username = st.radio("选择员工", df_users['username'].tolist())
         
-        if st.button("➕ 添加新员工"):
-            with st.form("add_user"):
-                new_u = st.text_input("用户名")
-                new_p = st.text_input("密码", type="password")
-                new_n = st.text_input("真实姓名")
-                if st.form_submit_button("创建"):
-                    if create_user(new_u, new_p, new_n): st.success("创建成功")
-                    else: st.error("失败")
+        st.divider()
+        st.markdown("#### 新增员工")
+        with st.form("add_user"):
+            new_u = st.text_input("用户名")
+            new_p = st.text_input("密码", type="password")
+            new_n = st.text_input("真实姓名")
+            if st.form_submit_button("创建"):
+                if create_user(new_u, new_p, new_n): st.success("创建成功"); st.rerun()
+                else: st.error("失败")
 
     with c_detail:
         if selected_username:
             user_info = df_users[df_users['username'] == selected_username].iloc[0]
-            stats = get_user_stats(selected_username)
+            st.markdown(f"### 👤 {user_info['real_name']}")
+            st.info(f"Role: {user_info['role']} | Last Seen: {str(user_info.get('last_seen', 'Never'))[:16]}")
             
-            st.markdown(f"### 👤 {user_info['real_name']} ({user_info['role']})")
-            
-            # 状态卡片
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("最后上线", str(user_info.get('last_seen', 'Never'))[:16])
-            k2.metric("总分配任务", stats.get('total', 0))
-            k3.metric("总完成", stats.get('done', 0))
-            k4.metric("7天完成", stats.get('recent_7_days', 0))
-            
-            st.divider()
-            
-            t1, t2 = st.tabs(["📜 历史客户", "🔐 账号管理"])
-            
-            with t1:
-                st.markdown("#### 最近处理的 20 个客户")
-                recent_leads = get_user_recent_leads(selected_username, 20)
-                if recent_leads:
-                    st.dataframe(pd.DataFrame(recent_leads), use_container_width=True)
-                else:
-                    st.info("暂无记录")
-            
-            with t2:
-                st.warning("⚠️ 管理员强制修改密码区域")
-                with st.form("change_pwd"):
-                    new_pass = st.text_input("输入新密码", type="password")
-                    if st.form_submit_button("确认修改密码"):
-                        if admin_update_user_password(selected_username, new_pass):
-                            st.success(f"已更新 {selected_username} 的密码")
+            # --- 危险操作区 ---
+            st.markdown("---")
+            st.markdown("#### 🚨 危险操作区")
+            with st.expander("🗑️ 删除账号并回收任务", expanded=False):
+                st.error("警告：此操作不可逆！删除后，该员工名下【未完成】的任务将自动重置回公共池，供其他员工领取。")
+                confirm_del = st.text_input(f"请输入 '{selected_username}' 确认删除")
+                
+                if st.button("确认删除用户"):
+                    if confirm_del == selected_username:
+                        if delete_user_and_recycle(selected_username):
+                            st.success(f"用户 {selected_username} 已删除，任务已回收！")
+                            time.sleep(1)
+                            st.rerun()
                         else:
-                            st.error("修改失败")
+                            st.error("删除失败，请检查数据库连接")
+                    else:
+                        st.warning("确认名称输入错误")
 
-# --- 🏭 IMPORT (管理员专属 - 智能进货) ---
+# --- 🏭 IMPORT (管理员 - 进货) ---
 elif selected_nav == "Import" and st.session_state['role'] == 'admin':
     st.markdown("### 🏭 智能进货中心")
-    st.caption("支持 2000+ 条数据的大批量处理，系统自动去重、清洗、验证。")
     
     col_up, col_log = st.columns([1, 1])
     
@@ -372,85 +465,37 @@ elif selected_nav == "Import" and st.session_state['role'] == 'admin':
             else: df_raw = pd.read_excel(up_file)
             st.write(f"读取到 {len(df_raw)} 行数据")
             
-            # 映射列
             c1, c2 = st.columns(2)
             s_col = c1.selectbox("店铺名列", df_raw.columns, index=1 if len(df_raw.columns)>1 else 0)
             l_col = c2.selectbox("链接/URL列", df_raw.columns, index=0)
             
-            start_btn = st.button("🚀 启动智能清洗与入库")
+            start_btn = st.button("🚀 启动处理")
 
     with col_log:
-        st.markdown("#### ⚙️ 处理日志")
-        log_container = st.container()
+        st.markdown("#### ⚙️ 日志")
         
     if up_file and start_btn:
         client = OpenAI(api_key=OPENAI_KEY)
-        
-        with st.status("正在进行大规模数据处理...", expanded=True) as status:
-            # 1. 提取号码
-            status.write("🔍 正在扫描所有行提取手机号...")
+        with st.status("处理中...", expanded=True) as status:
             df_raw = df_raw.astype(str)
             raw_phones = set()
             row_map = {}
-            
-            progress_bar = st.progress(0)
-            
             for i, r in df_raw.iterrows():
                 ext = extract_all_numbers(r)
                 for p in ext:
                     raw_phones.add(p)
                     if p not in row_map: row_map[p] = []
                     row_map[p].append(i)
-                if i % 100 == 0: progress_bar.progress(min((i+1)/len(df_raw), 1.0))
             
-            status.write(f"✅ 提取结束：发现 {len(raw_phones)} 个独立号码。")
+            status.write(f"提取到 {len(raw_phones)} 个号码，开始验证...")
             
-            # 2. 批量验证 (分批次，避免 API 超时)
-            status.write("📡 正在连接 CheckNumber 进行 WhatsApp 验证...")
             valid_phones = []
-            
-            # 将号码分批，每批 500 个
             phone_list = list(raw_phones)
             batch_size = 500
             for i in range(0, len(phone_list), batch_size):
                 batch = phone_list[i:i+batch_size]
-                status.write(f"正在验证第 {i+1} - {min(i+batch_size, len(phone_list))} 个号码...")
                 res_map = process_checknumber_task(batch, CN_KEY, CN_USER)
-                valid_batch = [p for p in batch if res_map.get(p) == 'valid']
-                valid_phones.extend(valid_batch)
-                time.sleep(1) # 稍微歇一下
+                valid_phones.extend([p for p in batch if res_map.get(p) == 'valid'])
+                time.sleep(1)
             
-            status.write(f"✅ 验证结束：其中 {len(valid_phones)} 个号码有效 (开通了 WhatsApp)。")
-            
-            # 3. 生成 AI 数据 & 入库
-            status.write("🧠 AI 正在生成营销话术并入库...")
-            final_rows = []
-            
-            ai_progress = st.progress(0)
-            for idx, p in enumerate(valid_phones):
-                # 找到原始数据
-                rid = row_map[p][0]
-                row = df_raw.iloc[rid]
-                s_name = row[s_col]
-                s_link = row[l_col]
-                
-                # 生成话术
-                msg = get_ai_message_sniper(client, s_name, s_link, "Sales Team")
-                
-                final_rows.append({
-                    "Shop": s_name, "Link": s_link, "Phone": p, "Msg": msg
-                })
-                
-                # 每 100 条入一次库，防止积压
-                if len(final_rows) >= 100:
-                    admin_bulk_upload_to_pool(final_rows)
-                    final_rows = [] # 清空缓冲
-                
-                ai_progress.progress((idx+1)/len(valid_phones))
-            
-            # 处理剩余的
-            if final_rows:
-                admin_bulk_upload_to_pool(final_rows)
-            
-            status.update(label="🎉 处理完成！所有有效数据已进入公共池。", state="complete")
-            st.success(f"成功入库 {len(valid_phones)} 条任务，等待自动分配。")
+            status.write(f"验证完成，有效号码 {len(valid_phones)} 个
