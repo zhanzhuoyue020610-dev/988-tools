@@ -356,26 +356,26 @@ st.markdown("""
         --text-primary: #e3e3e3;       
         --text-secondary: #8e8e8e;     
         --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
-        --btn-primary: linear-gradient(90deg, #4b90ff, #ff5546);
-        --btn-hover: linear-gradient(90deg, #5da0ff, #ff6b5c);
+        --btn-primary: linear-gradient(90deg, #6366f1, #818cf8); /* 星云紫 */
+        --btn-hover: linear-gradient(90deg, #818cf8, #a5b4fc);
         --btn-text: #ffffff;           
     }
 
-    /* 1. 全局去黑框重置 (The Nuclear Option) */
+    /* 1. ⚛️ 核心修复：全局文字光栅化 (去除黑框) */
     * {
-        text-shadow: none !important;
+        text-shadow: 0 0 0 transparent !important;
         -webkit-text-stroke: 0px !important;
         box-shadow: none !important;
+        -webkit-font-smoothing: antialiased !important;
+        -moz-osx-font-smoothing: grayscale !important;
+        text-rendering: geometricPrecision !important;
     }
 
-    /* 2. 字体平滑处理 (解决锯齿和发虚) */
+    /* 2. 基础重置 */
     .stApp, div, section, header, footer, button, input, label, p, h1, h2, h3 {
         background-color: var(--bg-color);
         color: var(--text-primary);
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
-        -webkit-font-smoothing: antialiased !important;
-        -moz-osx-font-smoothing: grayscale !important;
-        text-rendering: optimizeLegibility !important;
     }
     
     header { visibility: hidden !important; } 
@@ -385,8 +385,6 @@ st.markdown("""
         font-weight: 600; font-size: 28px;
         background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         letter-spacing: 1px; margin-bottom: 5px;
-        /* 这里的阴影是文字裁切必须清除的 */
-        text-shadow: none !important;
     }
     .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
 
@@ -401,7 +399,7 @@ st.markdown("""
     div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
 
-    /* 容器与卡片 */
+    /* 容器 */
     div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { 
         background-color: var(--surface-color) !important; 
         border: 1px solid #333 !important; 
@@ -411,8 +409,8 @@ st.markdown("""
     div[data-testid="stExpander"] details { border: none !important; }
     div[data-testid="stExpander"] summary { color: white !important; }
     
-    /* 按钮系统 - 流光渐变，无阴影 */
-    button { color: var(--btn-text) !important; text-shadow: none !important; }
+    /* 按钮系统 - 星云紫 */
+    button { color: var(--btn-text) !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
         background: var(--btn-primary) !important; 
         color: var(--btn-text) !important; 
@@ -421,16 +419,13 @@ st.markdown("""
         padding: 10px 24px !important; 
         font-weight: 600; 
         letter-spacing: 1px; 
-        transition: all 0.2s ease;
-        box-shadow: 0 4px 15px rgba(75, 144, 255, 0.2) !important; /* 仅保留微弱发光 */
+        transition: all 0.2s ease; 
+        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2) !important;
     }
     div.stButton > button:hover, div.stFormSubmitButton > button:hover { 
         transform: translateY(-2px); 
-        box-shadow: 0 6px 20px rgba(75, 144, 255, 0.4) !important;
+        box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important;
     }
-
-    /* 幽灵按钮 (次级操作，如获取链接) - 渐变文字 */
-    /* 我们无法直接给 Streamlit 按钮加类，只能针对特定位置微调，这里统一用实心按钮保持一致性 */
 
     /* 输入框 */
     div[data-baseweb="input"], div[data-baseweb="select"] { 
@@ -439,13 +434,13 @@ st.markdown("""
         border-radius: 8px !important;
         color: white !important;
     }
-    input { color: white !important; caret-color: #4b90ff; }
+    input { color: white !important; caret-color: #6366f1; }
     ::placeholder { color: #5f6368 !important; }
     
     /* 文件上传 */
     [data-testid="stFileUploader"] { background-color: transparent !important; }
     [data-testid="stFileUploader"] section { background-color: var(--input-bg) !important; border: 1px dashed #555 !important; }
-    [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; }
+    [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; box-shadow: none !important; }
     
     /* 告急提醒 */
     .error-alert-box { 
@@ -457,7 +452,7 @@ st.markdown("""
         margin-bottom: 20px; 
     }
 
-    /* 表格 & 进度条 */
+    /* 表格 */
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: var(--surface-color) !important; color: var(--text-secondary); }
     .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
     
