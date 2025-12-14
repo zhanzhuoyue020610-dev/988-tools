@@ -29,7 +29,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑 (逻辑层保持不变，仅UI重构)
+# ☁️ 数据库与核心逻辑
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -71,10 +71,10 @@ def get_user_daily_performance(username):
         df = pd.DataFrame(res.data)
         if df.empty: return pd.DataFrame()
         df['assign_date'] = pd.to_datetime(df['assigned_at']).dt.date
-        daily_claim = df.groupby('assign_date').size().rename("领取")
+        daily_claim = df.groupby('assign_date').size().rename("领取量")
         df_done = df[df['completed_at'].notna()].copy()
         df_done['done_date'] = pd.to_datetime(df_done['completed_at']).dt.date
-        daily_done = df_done.groupby('done_date').size().rename("完成")
+        daily_done = df_done.groupby('done_date').size().rename("完成量")
         stats = pd.concat([daily_claim, daily_done], axis=1).fillna(0).astype(int)
         stats = stats.sort_index(ascending=False)
         return stats
@@ -254,7 +254,7 @@ st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="⚫")
 
 st.markdown("""
 <style>
-    /* 引入 Google Fonts: Inter (类似 Gemini 的字体) */
+    /* 引入 Google Fonts: Inter */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
 
     :root {
@@ -275,9 +275,9 @@ st.markdown("""
         font-family: 'Inter', sans-serif !important;
     }
     
-    header { visibility: hidden !important; } /* 彻底隐藏顶部彩条，追求极致极简 */
+    header { visibility: hidden !important; } /* 彻底隐藏顶部彩条 */
     
-    /* 2. 标题排版 - 渐变流光文字 */
+    /* 2. 标题排版 */
     .gemini-header {
         font-weight: 600;
         font-size: 28px;
@@ -288,12 +288,12 @@ st.markdown("""
         margin-bottom: 20px;
     }
 
-    /* 3. 导航栏 (Capsule Style) */
+    /* 3. 导航栏 */
     div[data-testid="stRadio"] > div {
         background-color: var(--surface-color);
         border: none;
         padding: 6px;
-        border-radius: 50px; /* 全圆角胶囊 */
+        border-radius: 50px; 
         gap: 0px;
         display: inline-flex;
     }
@@ -307,15 +307,15 @@ st.markdown("""
         border: none;
     }
     div[data-testid="stRadio"] label[data-checked="true"] {
-        background-color: #3c4043 !important; /* 激活状态深灰 */
+        background-color: #3c4043 !important; 
         color: #ffffff !important;
         font-weight: 500;
     }
 
-    /* 4. 卡片与容器 (Cardless Feel) */
+    /* 4. 卡片与容器 */
     div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame {
         background-color: var(--surface-color) !important;
-        border: none !important; /* 去除边框，只靠色块 */
+        border: none !important;
         border-radius: var(--border-radius);
         padding: 5px;
     }
@@ -323,13 +323,13 @@ st.markdown("""
         border: none !important;
     }
     
-    /* 5. 按钮 (Pill Shape) */
+    /* 5. 按钮 */
     button { color: white !important; }
     div.stButton > button {
-        background-color: #d7e3ff !important; /* 浅蓝白 */
-        color: #001d35 !important;            /* 深蓝字 - 高对比 */
+        background-color: #d7e3ff !important; 
+        color: #001d35 !important;            
         border: none !important;
-        border-radius: 50px !important;       /* 药丸形状 */
+        border-radius: 50px !important;       
         padding: 10px 24px !important;
         font-weight: 600;
         transition: transform 0.1s;
@@ -338,13 +338,12 @@ st.markdown("""
         opacity: 0.9;
         transform: scale(1.02);
     }
-    /* 次级按钮/禁用按钮 */
     button:disabled {
         background-color: #444746 !important;
         color: #8e8e8e !important;
     }
 
-    /* 6. 输入框 (Immersive) */
+    /* 6. 输入框 */
     div[data-baseweb="input"], div[data-baseweb="select"] {
         background-color: var(--input-bg) !important;
         border: none !important;
@@ -352,13 +351,13 @@ st.markdown("""
     }
     input { color: white !important; }
 
-    /* 7. 表格 (Minimal Grid) */
+    /* 7. 表格 */
     div[data-testid="stDataFrame"] div[role="grid"] {
         background-color: var(--surface-color) !important;
         color: var(--text-secondary);
     }
 
-    /* 8. 进度条 (Slim) */
+    /* 8. 进度条 */
     .stProgress > div > div > div > div {
         background: var(--accent-gradient) !important;
         height: 6px !important;
@@ -381,7 +380,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔐 极简登录页 (SSO Style)
+# 🔐 极简登录页
 # ==========================================
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 
@@ -389,7 +388,6 @@ if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1,1.2,1])
     with c2:
         st.markdown("<br><br><br><br>", unsafe_allow_html=True)
-        # Gemini 风格标题
         st.markdown('<div class="gemini-header" style="text-align:center;">988 GROUP CRM</div>', unsafe_allow_html=True)
         st.markdown('<p style="text-align:center; font-size:13px; color:#8e8e8e;">Welcome back. Please sign in to continue.</p>', unsafe_allow_html=True)
         
@@ -414,17 +412,16 @@ try:
     OPENAI_KEY = st.secrets["OPENAI_KEY"]
 except: CN_USER=""; CN_KEY=""; OPENAI_KEY=""
 
-# 极简顶部栏 (Avatar & Logout)
+# 顶部栏
 c_nav, c_user = st.columns([6, 1])
 with c_nav:
-    # 动态标题
     st.markdown(f'<div class="gemini-header" style="font-size:20px; margin:0;">Hello, {st.session_state["real_name"]}</div>', unsafe_allow_html=True)
 with c_user:
     if st.button("Logout", key="logout"): st.session_state.clear(); st.rerun()
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 胶囊导航
+# 导航
 if st.session_state['role'] == 'admin':
     menu_map = {"System": "System", "Logs": "Logs", "Team": "Team", "Import": "Import"}
     menu_options = ["System", "Logs", "Team", "Import"]
@@ -461,7 +458,6 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
     
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("#### Sandbox Simulation")
-    st.caption("Test the pipeline without database writes.")
     
     sb_file = st.file_uploader("Upload Test CSV", type=['csv', 'xlsx'])
     if sb_file and st.button("Run Simulation"):
@@ -550,8 +546,14 @@ elif selected_nav == "Logs":
     if d:
         c, f = get_daily_logs(d.isoformat())
         col1, col2 = st.columns(2)
-        with col1: st.markdown("Claimed"); st.dataframe(c, use_container_width=True)
-        with col2: st.markdown("Finished"); st.dataframe(f, use_container_width=True)
+        with col1:
+            st.markdown("Claimed")
+            if not c.empty: st.dataframe(c, use_container_width=True)
+            else: st.caption("No Data")
+        with col2:
+            st.markdown("Finished")
+            if not f.empty: st.dataframe(f, use_container_width=True)
+            else: st.caption("No Data")
 
 # --- 👥 TEAM (Admin) ---
 elif selected_nav == "Team":
@@ -579,8 +581,20 @@ elif selected_nav == "Team":
             k2.metric("Total Done", td)
             
             t1, t2, t3 = st.tabs(["Performance", "History", "Settings"])
-            with t1: st.bar_chart(perf) if not perf.empty else st.caption("No Data")
-            with t2: st.dataframe(hist, use_container_width=True) if not hist.empty else st.caption("No Data")
+            
+            # --- 修复的三元表达式逻辑 ---
+            with t1:
+                if not perf.empty:
+                    st.bar_chart(perf)
+                else:
+                    st.caption("No Data")
+            
+            with t2:
+                if not hist.empty:
+                    st.dataframe(hist, use_container_width=True)
+                else:
+                    st.caption("No Data")
+            
             with t3:
                 if st.button("Delete User & Recycle Tasks"):
                     delete_user_and_recycle(u); st.rerun()
@@ -624,7 +638,7 @@ elif selected_nav == "Import":
                 rows = []
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]
-                    # 简单容错：假设第1列是Link，第2列是Shop
+                    # 容错处理
                     lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
                     msg = get_ai_message_sniper(client, shp, lnk, "Sales")
                     rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":msg})
