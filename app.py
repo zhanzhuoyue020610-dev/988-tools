@@ -248,24 +248,24 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 GEMINI MINIMALIST DARK THEME
+# 🎨 GEMINI DARK - HIGH CONTRAST BUTTONS
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="⚫")
 
 st.markdown("""
 <style>
-    /* 引入 Google Fonts: Inter */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
 
     :root {
-        /* Gemini Dark Palette */
-        --bg-color: #131314;           /* 极深灰背景 */
-        --surface-color: #1e1f20;      /* 悬浮层背景 */
-        --input-bg: #282a2c;           /* 输入框背景 */
-        --text-primary: #e3e3e3;       /* 主要文字 */
-        --text-secondary: #8e8e8e;     /* 次要文字 */
-        --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); /* Gemini 风格渐变 */
-        --border-radius: 16px;         /* 大圆角 */
+        --bg-color: #131314;           
+        --surface-color: #1e1f20;      
+        --input-bg: #282a2c;           
+        --text-primary: #e3e3e3;       
+        --text-secondary: #8e8e8e;     
+        --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
+        --btn-primary: #1f6feb;        /* 宝石蓝按钮 */
+        --btn-hover: #3b82f6;          /* 悬浮高亮蓝 */
+        --btn-text: #ffffff;           /* 纯白文字 - 保证对比度 */
     }
 
     /* 1. 基础重置 */
@@ -274,8 +274,7 @@ st.markdown("""
         color: var(--text-primary) !important;
         font-family: 'Inter', sans-serif !important;
     }
-    
-    header { visibility: hidden !important; } /* 彻底隐藏顶部彩条 */
+    header { visibility: hidden !important; } 
     
     /* 2. 标题排版 */
     .gemini-header {
@@ -316,31 +315,44 @@ st.markdown("""
     div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame {
         background-color: var(--surface-color) !important;
         border: none !important;
-        border-radius: var(--border-radius);
+        border-radius: 16px;
         padding: 5px;
     }
     div[data-testid="stExpander"] details {
         border: none !important;
     }
     
-    /* 5. 按钮 */
-    button { color: white !important; }
+    /* 5. 按钮 - 高对比度重绘 (核心修复) */
+    button { color: var(--btn-text) !important; }
+    
     div.stButton > button {
-        background-color: #d7e3ff !important; 
-        color: #001d35 !important;            
+        background-color: var(--btn-primary) !important; /* 强制深蓝背景 */
+        color: var(--btn-text) !important;               /* 强制纯白文字 */
         border: none !important;
-        border-radius: 50px !important;       
+        border-radius: 50px !important;
         padding: 10px 24px !important;
         font-weight: 600;
-        transition: transform 0.1s;
+        letter-spacing: 0.5px;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     }
+    
     div.stButton > button:hover {
-        opacity: 0.9;
-        transform: scale(1.02);
+        background-color: var(--btn-hover) !important;   /* 悬浮变亮 */
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.3);
     }
+    
+    div.stButton > button:active {
+        transform: translateY(0px);
+    }
+
+    /* 禁用按钮样式 */
     button:disabled {
-        background-color: #444746 !important;
-        color: #8e8e8e !important;
+        background-color: #303134 !important;
+        color: #80868b !important;
+        box-shadow: none !important;
+        cursor: not-allowed;
     }
 
     /* 6. 输入框 */
@@ -582,7 +594,6 @@ elif selected_nav == "Team":
             
             t1, t2, t3 = st.tabs(["Performance", "History", "Settings"])
             
-            # --- 修复的三元表达式逻辑 ---
             with t1:
                 if not perf.empty:
                     st.bar_chart(perf)
@@ -638,7 +649,7 @@ elif selected_nav == "Import":
                 rows = []
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]
-                    # 容错处理
+                    # 简单容错：假设第1列是Link，第2列是Shop
                     lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
                     msg = get_ai_message_sniper(client, shp, lnk, "Sales")
                     rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":msg})
