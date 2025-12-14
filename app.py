@@ -34,7 +34,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑 (不变)
+# ☁️ 数据库与核心逻辑 (保持不变)
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -100,6 +100,7 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
+# --- 🔥 AI 生成 ---
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
         local_quotes = ["心有繁星，沐光而行。", "坚持是另一种形式的天赋。", "沉稳是职场最高级的修养。", "每一步都算数。", "保持专注，未来可期。"]
@@ -142,6 +143,7 @@ def generate_and_update_task(lead, client, rep_name):
         return True
     except: return False
 
+# --- 数据查询 ---
 def get_user_daily_performance(username):
     if not supabase: return pd.DataFrame()
     try:
@@ -354,40 +356,52 @@ st.markdown("""
         --text-primary: #e3e3e3;       
         --text-secondary: #8e8e8e;     
         --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
-        --btn-primary: linear-gradient(90deg, #4b90ff, #ff5546); /* 按钮也用 Gemini 渐变 */
+        --btn-primary: linear-gradient(90deg, #4b90ff, #ff5546);
         --btn-hover: linear-gradient(90deg, #5da0ff, #ff6b5c);
         --btn-text: #ffffff;           
     }
 
-    /* 1. 全局去白重置 */
-    .stApp, div, section, header, footer {
+    /* 1. 全局去黑框重置 (The Nuclear Option) */
+    * {
+        text-shadow: none !important;
+        -webkit-text-stroke: 0px !important;
+        box-shadow: none !important;
+    }
+
+    /* 2. 字体平滑处理 (解决锯齿和发虚) */
+    .stApp, div, section, header, footer, button, input, label, p, h1, h2, h3 {
         background-color: var(--bg-color);
         color: var(--text-primary);
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
-        text-shadow: none !important; /* 核心：去除文字黑框 */
+        -webkit-font-smoothing: antialiased !important;
+        -moz-osx-font-smoothing: grayscale !important;
+        text-rendering: optimizeLegibility !important;
     }
+    
     header { visibility: hidden !important; } 
     
-    /* 2. 标题排版 */
+    /* 标题排版 */
     .gemini-header {
         font-weight: 600; font-size: 28px;
         background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         letter-spacing: 1px; margin-bottom: 5px;
+        /* 这里的阴影是文字裁切必须清除的 */
+        text-shadow: none !important;
     }
     .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
 
-    /* 3. 积分胶囊 */
+    /* 积分胶囊 */
     .points-pill {
         background-color: rgba(255, 255, 255, 0.05); color: #e3e3e3; border: 1px solid rgba(255, 255, 255, 0.1);
         padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace;
     }
 
-    /* 4. 导航栏 (Radio) */
+    /* 导航栏 */
     div[data-testid="stRadio"] > div { background-color: var(--surface-color) !important; border: none; padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
-    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; text-shadow: none !important; }
+    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
 
-    /* 5. 容器与卡片 */
+    /* 容器与卡片 */
     div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { 
         background-color: var(--surface-color) !important; 
         border: 1px solid #333 !important; 
@@ -397,7 +411,7 @@ st.markdown("""
     div[data-testid="stExpander"] details { border: none !important; }
     div[data-testid="stExpander"] summary { color: white !important; }
     
-    /* 6. 按钮系统 - 流光渐变 */
+    /* 按钮系统 - 流光渐变，无阴影 */
     button { color: var(--btn-text) !important; text-shadow: none !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
         background: var(--btn-primary) !important; 
@@ -407,15 +421,18 @@ st.markdown("""
         padding: 10px 24px !important; 
         font-weight: 600; 
         letter-spacing: 1px; 
-        transition: all 0.2s ease; 
-        box-shadow: 0 4px 15px rgba(75, 144, 255, 0.3); /* 蓝色光晕 */
+        transition: all 0.2s ease;
+        box-shadow: 0 4px 15px rgba(75, 144, 255, 0.2) !important; /* 仅保留微弱发光 */
     }
     div.stButton > button:hover, div.stFormSubmitButton > button:hover { 
         transform: translateY(-2px); 
-        box-shadow: 0 6px 20px rgba(75, 144, 255, 0.5);
+        box-shadow: 0 6px 20px rgba(75, 144, 255, 0.4) !important;
     }
 
-    /* 7. 输入框 - 强制深灰 (去除所有白色背景) */
+    /* 幽灵按钮 (次级操作，如获取链接) - 渐变文字 */
+    /* 我们无法直接给 Streamlit 按钮加类，只能针对特定位置微调，这里统一用实心按钮保持一致性 */
+
+    /* 输入框 */
     div[data-baseweb="input"], div[data-baseweb="select"] { 
         background-color: var(--input-bg) !important; 
         border: 1px solid #444 !important; 
@@ -425,12 +442,12 @@ st.markdown("""
     input { color: white !important; caret-color: #4b90ff; }
     ::placeholder { color: #5f6368 !important; }
     
-    /* 8. 文件上传 - 深色化 */
+    /* 文件上传 */
     [data-testid="stFileUploader"] { background-color: transparent !important; }
     [data-testid="stFileUploader"] section { background-color: var(--input-bg) !important; border: 1px dashed #555 !important; }
     [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; }
     
-    /* 9. 告急提醒 - 红色透明 */
+    /* 告急提醒 */
     .error-alert-box { 
         background-color: rgba(255, 95, 86, 0.15); 
         border: 1px solid #ff5f56; 
@@ -438,16 +455,11 @@ st.markdown("""
         padding: 15px; 
         border-radius: 8px; 
         margin-bottom: 20px; 
-        text-shadow: none !important; /* 去黑框 */
     }
 
-    /* 10. 表格 & 进度条 */
+    /* 表格 & 进度条 */
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: var(--surface-color) !important; color: var(--text-secondary); }
-    .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 6px !important; border-radius: 10px; }
-    
-    .status-dot { height: 6px; width: 6px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle;}
-    .dot-green { background-color: #6dd58c; }
-    .dot-red { background-color: #ff5f56; }
+    .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
     
     h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
     p, span, div, label { color: #c4c7c5 !important; }
@@ -469,8 +481,8 @@ if not st.session_state['logged_in']:
         st.markdown('<div class="warm-quote" style="text-align:center;">专业 · 高效 · 全球化</div>', unsafe_allow_html=True)
         
         with st.form("login", border=False):
-            u = st.text_input("账号", placeholder="请输入用户名")
-            p = st.text_input("密码", type="password", placeholder="请输入密码")
+            u = st.text_input("Account ID", placeholder="请输入账号")
+            p = st.text_input("Password", type="password", placeholder="请输入密码")
             st.markdown("<br>", unsafe_allow_html=True)
             if st.form_submit_button("登 录"):
                 user = login_user(u, p)
@@ -610,21 +622,23 @@ elif selected_nav == "Workbench":
         if not todos: st.caption("没有待办任务")
         for item in todos:
             with st.expander(f"{item['shop_name']}", expanded=True):
-                if CONFIG["FALLBACK_SIGNATURE"] in item['ai_message']: st.warning("⚠️ 此文案为保底文案，正在尝试自动修复...")
-                else: st.write(item['ai_message'])
-                c1, c2 = st.columns(2)
-                key = f"clk_{item['id']}"
-                if key not in st.session_state: st.session_state[key] = False
-                if not st.session_state[key]:
-                    if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
-                    c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
+                if not item['ai_message']:
+                    st.warning("⚠️ 文案生成中，请稍后刷新...")
                 else:
-                    url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
-                    c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
-                    if c2.button("确认完成", key=f"fin_{item['id']}"):
-                        mark_lead_complete_secure(item['id'], st.session_state['username'])
-                        st.toast(f"积分 +{CONFIG['POINTS_PER_TASK']}")
-                        del st.session_state[key]; time.sleep(1); st.rerun()
+                    st.write(item['ai_message'])
+                    c1, c2 = st.columns(2)
+                    key = f"clk_{item['id']}"
+                    if key not in st.session_state: st.session_state[key] = False
+                    if not st.session_state[key]:
+                        if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
+                        c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
+                    else:
+                        url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
+                        c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
+                        if c2.button("确认完成", key=f"fin_{item['id']}"):
+                            mark_lead_complete_secure(item['id'], st.session_state['username'])
+                            st.toast(f"积分 +{CONFIG['POINTS_PER_TASK']}")
+                            del st.session_state[key]; time.sleep(1); st.rerun()
     with tabs[1]:
         dones = [x for x in my_leads if x.get('is_contacted')]
         if dones:
