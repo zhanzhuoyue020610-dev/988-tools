@@ -34,7 +34,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑
+# ☁️ 数据库与核心逻辑 (保持不变)
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -100,8 +100,7 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 AI 生成逻辑 ---
-
+# --- 🔥 AI 生成 ---
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
         local_quotes = ["心有繁星，沐光而行。", "坚持是另一种形式的天赋。", "沉稳是职场最高级的修养。", "每一步都算数。", "保持专注，未来可期。"]
@@ -109,9 +108,7 @@ def get_daily_motivation(client):
             if not client: raise Exception("No Client")
             prompt = "你是专业的职场心理咨询师。请生成一句温暖、治愈的中文短句，不超过25字。不要带引号。"
             res = client.chat.completions.create(
-                model=CONFIG["AI_MODEL"], 
-                messages=[{"role":"user","content":prompt}],
-                temperature=0.9, max_tokens=60
+                model=CONFIG["AI_MODEL"], messages=[{"role":"user","content":prompt}], temperature=0.9, max_tokens=60
             )
             st.session_state["motivation_quote"] = res.choices[0].message.content
         except:
@@ -119,44 +116,32 @@ def get_daily_motivation(client):
     return st.session_state["motivation_quote"]
 
 def get_ai_message_sniper(client, shop, link, rep_name):
-    # 离线模版 (兜底)
     offline_template = f"Здравствуйте! Заметили ваш магазин {shop} на Ozon. {rep_name} из 988 Group на связи. Мы занимаемся поставками из Китая. Можем рассчитать логистику?"
-    
     if not shop or str(shop).lower() in ['nan', 'none', '']: return "数据缺失"
-    
-    # 🔥 Prompt 强制使用传入的 rep_name (即 username)
     prompt = f"""
     Role: Supply Chain Manager '{rep_name}' at 988 Group.
     Target: Ozon Seller '{shop}' (Link: {link}).
     Task: Write a Russian WhatsApp intro (under 50 words).
-    
     RULES:
     1. Introduce yourself exactly as: "{rep_name} (988 Group)".
     2. NO placeholders like [Name].
     3. Mention sourcing + logistics benefits.
     4. Ask if they want a calculation.
     """
-    
     try:
         if not client: return offline_template
-        res = client.chat.completions.create(
-            model=CONFIG["AI_MODEL"],
-            messages=[{"role":"user","content":prompt}]
-        )
+        res = client.chat.completions.create(model=CONFIG["AI_MODEL"],messages=[{"role":"user","content":prompt}])
         content = res.choices[0].message.content.strip()
         if "[" in content or "]" in content: return offline_template
         return content
-    except:
-        return offline_template
+    except: return offline_template
 
-# --- 并发生成逻辑 ---
 def generate_and_update_task(lead, client, rep_name):
     try:
         msg = get_ai_message_sniper(client, lead['shop_name'], lead['shop_link'], rep_name)
         supabase.table('leads').update({'ai_message': msg}).eq('id', lead['id']).execute()
         return True
-    except:
-        return False
+    except: return False
 
 # --- 数据查询 ---
 def get_user_daily_performance(username):
@@ -181,8 +166,7 @@ def get_user_historical_data(username):
         total_claimed = res_claimed.count
         res_done = supabase.table('leads').select('id', count='exact').eq('assigned_to', username).eq('is_contacted', True).execute()
         total_done = res_done.count
-        res_list = supabase.table('leads').select('shop_name, phone, shop_link, completed_at')\
-            .eq('assigned_to', username).eq('is_contacted', True).order('completed_at', desc=True).limit(1000).execute()
+        res_list = supabase.table('leads').select('shop_name, phone, shop_link, completed_at').eq('assigned_to', username).eq('is_contacted', True).order('completed_at', desc=True).limit(1000).execute()
         return total_claimed, total_done, pd.DataFrame(res_list.data)
     except: return 0, 0, pd.DataFrame()
 
@@ -233,10 +217,7 @@ def admin_bulk_upload_to_pool(leads_data):
         return True
     except: return False
 
-def claim_daily_tasks(username, client):
-    """
-    🔥 核心修改：使用 username 作为 AI 的 rep_name
-    """
+def claim_daily_tasks(username, real_name, client):
     today_str = date.today().isoformat()
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
@@ -251,7 +232,6 @@ def claim_daily_tasks(username, client):
         
         fresh_tasks = supabase.table('leads').select("*").in_('id', ids_to_update).execute().data
         
-        # 🔥 这里传入 username，而不是 real_name
         with st.status(f"正在为 {username} 生成专属文案...", expanded=True) as status:
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
                 futures = [executor.submit(generate_and_update_task, task, client, username) for task in fresh_tasks]
@@ -265,7 +245,6 @@ def claim_daily_tasks(username, client):
 def get_todays_leads(username, client):
     today_str = date.today().isoformat()
     leads = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
-    # 检查是否有未生成的文案（null），如果有，修补一下 (使用 username)
     to_heal = [l for l in leads if not l['ai_message']]
     if to_heal:
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
@@ -356,17 +335,13 @@ def check_api_health(cn_user, cn_key, openai_key):
         if not openai_key or "sk-" not in openai_key: status["msg"].append("OpenAI: 格式错误")
         else:
             client = OpenAI(api_key=openai_key)
-            client.chat.completions.create(
-                model=CONFIG["AI_MODEL"], 
-                messages=[{"role":"user","content":"Hi"}],
-                max_tokens=1
-            )
+            client.chat.completions.create(model=CONFIG["AI_MODEL"], messages=[{"role":"user","content":"Hi"}], max_tokens=1)
             status["openai"] = True
     except Exception as e: status["msg"].append(f"OpenAI: {str(e)}")
     return status
 
 # ==========================================
-# 🎨 UI 主题
+# 🎨 UI 主题 (Ultimate Dark)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="⚫")
 
@@ -378,52 +353,111 @@ st.markdown("""
     :root {
         --bg-color: #131314;           
         --surface-color: #1e1f20;      
-        --input-bg: #282a2c;           
+        --input-bg: #2d2e33;           /* 修正：更深的灰色 */
         --text-primary: #e3e3e3;       
         --text-secondary: #8e8e8e;     
         --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
-        --btn-primary: #1f6feb;        
-        --btn-hover: #3b82f6;          
+        --btn-primary: #6366f1;        /* 星云紫 */
+        --btn-hover: #818cf8;          
         --btn-text: #ffffff;           
     }
 
-    .stApp { background-color: var(--bg-color) !important; color: var(--text-primary) !important; font-family: 'Inter', 'Noto Sans SC', sans-serif !important; }
+    /* 全局颜色重置 - 暴力覆盖所有可能的白色 */
+    .stApp, div, section, header, footer {
+        background-color: var(--bg-color);
+        color: var(--text-primary);
+        font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
+    }
+    
     header { visibility: hidden !important; } 
     
+    /* 标题与文字 */
     .gemini-header {
         font-weight: 600; font-size: 28px;
         background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         letter-spacing: 1px; margin-bottom: 5px;
     }
-    
     .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
 
+    /* 积分胶囊 */
     .points-pill {
         background-color: rgba(255, 255, 255, 0.05); color: #e3e3e3; border: 1px solid rgba(255, 255, 255, 0.1);
         padding: 6px 16px; border-radius: 4px; font-size: 13px; font-family: 'Inter', monospace; letter-spacing: 0.5px;
     }
 
-    div[data-testid="stRadio"] > div { background-color: var(--surface-color); border: none; padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
+    /* 导航栏 (Radio) */
+    div[data-testid="stRadio"] > div { background-color: var(--surface-color) !important; border: none; padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
     div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
 
-    div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { background-color: var(--surface-color) !important; border: none !important; border-radius: 12px; padding: 10px; }
+    /* 容器与卡片 */
+    div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { 
+        background-color: var(--surface-color) !important; 
+        border: 1px solid #333 !important; /* 微弱边框增强质感 */
+        border-radius: 12px; 
+        padding: 10px; 
+    }
     div[data-testid="stExpander"] details { border: none !important; }
-    
+    div[data-testid="stExpander"] summary { background-color: transparent !important; color: white !important; }
+    div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
+
+    /* 按钮系统 - 星云紫 */
     button { color: var(--btn-text) !important; }
-    div.stButton > button, div.stFormSubmitButton > button { background-color: var(--btn-primary) !important; color: var(--btn-text) !important; border: none !important; border-radius: 50px !important; padding: 10px 24px !important; font-weight: 500; letter-spacing: 1px; transition: all 0.2s ease; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-    div.stButton > button:hover, div.stFormSubmitButton > button:hover { background-color: var(--btn-hover) !important; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
+    div.stButton > button, div.stFormSubmitButton > button { 
+        background-color: var(--btn-primary) !important; 
+        color: var(--btn-text) !important; 
+        border: none !important; 
+        border-radius: 50px !important; 
+        padding: 10px 24px !important; 
+        font-weight: 600; 
+        letter-spacing: 1px; 
+        transition: all 0.2s ease; 
+        box-shadow: 0 4px 10px rgba(99, 102, 241, 0.3); /* 紫色光晕 */
+    }
+    div.stButton > button:hover, div.stFormSubmitButton > button:hover { 
+        background-color: var(--btn-hover) !important; 
+        transform: translateY(-2px); 
+        box-shadow: 0 6px 15px rgba(99, 102, 241, 0.5);
+    }
 
-    [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444746 !important; }
-    [data-testid="stFileUploader"] button:hover { background-color: #444746 !important; border-color: #5e5e5e !important; }
-    [data-testid="stFileUploader"] div { color: #8e8e8e !important; }
+    /* ❌❌❌ 终极去白：文件上传 ❌❌❌ */
+    [data-testid="stFileUploader"] { background-color: transparent !important; }
+    [data-testid="stFileUploader"] section { 
+        background-color: var(--input-bg) !important; 
+        border: 1px dashed #555 !important;
+    }
+    [data-testid="stFileUploader"] button { 
+        background-color: #303134 !important; 
+        color: #e3e3e3 !important; 
+        border: 1px solid #444 !important; 
+    }
+    /* 隐藏上传区域内的黑色小字 */
+    [data-testid="stFileUploader"] small { color: #888 !important; }
 
-    div[data-baseweb="input"], div[data-baseweb="select"] { background-color: var(--input-bg) !important; border: 1px solid #3c4043 !important; border-radius: 8px; }
-    div[data-baseweb="input"]:focus-within { border-color: #4b90ff !important; }
-    input[type="text"], input[type="password"], input[type="number"] { color: #ffffff !important; background-color: transparent !important; }
-    ::placeholder { color: #5f6368 !important; }
-
+    /* ❌❌❌ 终极去白：输入框 ❌❌❌ */
+    /* 覆盖 BaseWeb Input 容器 */
+    div[data-baseweb="input"], div[data-baseweb="base-input"] { 
+        background-color: var(--input-bg) !important; 
+        border: 1px solid #444 !important; 
+        border-radius: 8px !important;
+        color: white !important;
+    }
+    /* 覆盖实际 Input 元素 */
+    input.st-ai, input.st-ah, textarea.st-ai, textarea.st-ah { 
+        background-color: transparent !important;
+        color: white !important;
+    }
+    /* 覆盖下拉菜单 */
+    div[data-baseweb="select"] > div {
+        background-color: var(--input-bg) !important;
+        color: white !important;
+        border-color: #444 !important;
+    }
+    
+    /* 表格 */
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: var(--surface-color) !important; color: var(--text-secondary); }
+    
+    /* 进度条 */
     .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
     
     .status-dot { height: 6px; width: 6px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle;}
@@ -447,12 +481,12 @@ if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1,1.2,1])
     with c2:
         st.markdown("<br><br><br><br>", unsafe_allow_html=True)
-        st.markdown('<div class="gemini-header" style="text-align:center;">988 集团客户管理系统</div>', unsafe_allow_html=True)
+        st.markdown('<div class="gemini-header" style="text-align:center;">988 GROUP CRM</div>', unsafe_allow_html=True)
         st.markdown('<div class="warm-quote" style="text-align:center;">专业 · 高效 · 全球化</div>', unsafe_allow_html=True)
         
         with st.form("login", border=False):
-            u = st.text_input("账号", placeholder="请输入用户名")
-            p = st.text_input("密码", type="password", placeholder="请输入密码")
+            u = st.text_input("Account ID", placeholder="请输入账号")
+            p = st.text_input("Password", type="password", placeholder="请输入密码")
             st.markdown("<br>", unsafe_allow_html=True)
             if st.form_submit_button("登 录"):
                 user = login_user(u, p)
@@ -592,7 +626,6 @@ elif selected_nav == "Workbench":
         if not todos: st.caption("没有待办任务")
         for item in todos:
             with st.expander(f"{item['shop_name']}", expanded=True):
-                # 如果文案还没生成（并发延迟），显示加载中
                 if not item['ai_message']:
                     st.warning("⚠️ 文案生成中，请稍后刷新...")
                 else:
@@ -709,7 +742,7 @@ elif selected_nav == "Import":
                     batch = plist[i:i+500]; res = process_checknumber_task(batch, CN_KEY, CN_USER)
                     valid.extend([p for p in batch if res.get(p)=='valid']); time.sleep(1)
                 
-                # 🔥 进货时 Msg 设为 None，等待领取时生成
+                # 🔥 进货时 Msg 设为 None
                 s.write(f"有效号码 {len(valid)} 个，正在存入公池...")
                 rows = []
                 for idx, p in enumerate(valid):
