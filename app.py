@@ -29,7 +29,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑
+# ☁️ 数据库与核心逻辑 (保持不变)
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -248,13 +248,14 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 GEMINI DARK - HIGH CONTRAST BUTTONS
+# 🎨 GEMINI DARK - 中文适配与控件修复版
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="⚫")
 
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap'); /* 引入中文黑体 */
 
     :root {
         --bg-color: #131314;           
@@ -263,16 +264,16 @@ st.markdown("""
         --text-primary: #e3e3e3;       
         --text-secondary: #8e8e8e;     
         --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
-        --btn-primary: #1f6feb;        /* 宝石蓝按钮 */
-        --btn-hover: #3b82f6;          /* 悬浮高亮蓝 */
-        --btn-text: #ffffff;           /* 纯白文字 - 保证对比度 */
+        --btn-primary: #1f6feb;        
+        --btn-hover: #3b82f6;          
+        --btn-text: #ffffff;           
     }
 
-    /* 1. 基础重置 */
+    /* 1. 全局字体 - 优先使用中文黑体 */
     .stApp {
         background-color: var(--bg-color) !important;
         color: var(--text-primary) !important;
-        font-family: 'Inter', sans-serif !important;
+        font-family: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, "Microsoft YaHei", sans-serif !important;
     }
     header { visibility: hidden !important; } 
     
@@ -283,7 +284,7 @@ st.markdown("""
         background: var(--accent-gradient);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        letter-spacing: -0.5px;
+        letter-spacing: 1px;
         margin-bottom: 20px;
     }
 
@@ -301,7 +302,7 @@ st.markdown("""
         color: var(--text-secondary) !important;
         padding: 8px 24px;
         border-radius: 40px;
-        font-size: 14px;
+        font-size: 15px; /* 中文稍微大一点 */
         transition: all 0.3s ease;
         border: none;
     }
@@ -318,81 +319,90 @@ st.markdown("""
         border-radius: 16px;
         padding: 5px;
     }
-    div[data-testid="stExpander"] details {
-        border: none !important;
-    }
+    div[data-testid="stExpander"] details { border: none !important; }
     
-    /* 5. 按钮 - 高对比度重绘 (核心修复) */
+    /* 5. 按钮系统 - 强制深蓝底 + 白字 */
     button { color: var(--btn-text) !important; }
     
-    div.stButton > button {
-        background-color: var(--btn-primary) !important; /* 强制深蓝背景 */
-        color: var(--btn-text) !important;               /* 强制纯白文字 */
+    /* 针对所有类型的按钮进行覆盖 */
+    div.stButton > button, div.stFormSubmitButton > button {
+        background-color: var(--btn-primary) !important; 
+        color: var(--btn-text) !important;               
         border: none !important;
         border-radius: 50px !important;
         padding: 10px 24px !important;
         font-weight: 600;
-        letter-spacing: 0.5px;
+        letter-spacing: 1px;
         transition: all 0.2s ease;
         box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     }
-    
-    div.stButton > button:hover {
-        background-color: var(--btn-hover) !important;   /* 悬浮变亮 */
+    div.stButton > button:hover, div.stFormSubmitButton > button:hover {
+        background-color: var(--btn-hover) !important;   
         transform: translateY(-1px);
         box-shadow: 0 4px 8px rgba(0,0,0,0.3);
     }
-    
-    div.stButton > button:active {
-        transform: translateY(0px);
+
+    /* 6. 上传文件按钮 - 核心修复 */
+    /* 覆盖 Streamlit 默认的白色上传按钮 */
+    [data-testid="stFileUploader"] button {
+        background-color: #303134 !important; /* 深灰 */
+        color: #e3e3e3 !important;
+        border: 1px solid #444746 !important;
+    }
+    [data-testid="stFileUploader"] button:hover {
+        background-color: #444746 !important;
+        border-color: #5e5e5e !important;
+    }
+    [data-testid="stFileUploader"] div {
+        color: #8e8e8e !important;
     }
 
-    /* 禁用按钮样式 */
-    button:disabled {
-        background-color: #303134 !important;
-        color: #80868b !important;
-        box-shadow: none !important;
-        cursor: not-allowed;
-    }
-
-    /* 6. 输入框 */
+    /* 7. 输入框 - 核心修复 (深色沉浸式) */
+    /* 覆盖 input 元素的背景和文字颜色 */
     div[data-baseweb="input"], div[data-baseweb="select"] {
         background-color: var(--input-bg) !important;
-        border: none !important;
+        border: 1px solid #3c4043 !important;
         border-radius: 12px;
     }
-    input { color: white !important; }
+    div[data-baseweb="input"]:focus-within {
+        border-color: #4b90ff !important;
+    }
+    /* 真实的 input 标签 */
+    input[type="text"], input[type="password"], input[type="number"] {
+        color: #ffffff !important;
+        background-color: transparent !important;
+    }
+    /* 修复输入框占位符颜色 */
+    ::placeholder { color: #5f6368 !important; }
 
-    /* 7. 表格 */
+    /* 8. 表格 */
     div[data-testid="stDataFrame"] div[role="grid"] {
         background-color: var(--surface-color) !important;
         color: var(--text-secondary);
     }
 
-    /* 8. 进度条 */
+    /* 9. 进度条 */
     .stProgress > div > div > div > div {
         background: var(--accent-gradient) !important;
         height: 6px !important;
         border-radius: 10px;
     }
 
-    /* 9. 状态指示器 */
-    .status-dot {
-        height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 6px;
-    }
+    /* 10. 状态点 */
+    .status-dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
     .dot-green { background-color: #6dd58c; box-shadow: 0 0 8px #6dd58c; }
     .dot-red { background-color: #ff5f56; }
     
-    /* 10. 文字层级 */
-    h1, h2, h3, h4 { color: #ffffff !important; font-family: 'Inter', sans-serif; font-weight: 500 !important;}
-    p, span, div, label { color: #c4c7c5 !important; font-weight: 400; }
+    /* 11. 文字层级 */
+    h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
+    p, span, div, label { color: #c4c7c5 !important; }
     .stCaption { color: #8e8e8e !important; }
 
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔐 极简登录页
+# 🔐 登录页 (全中文)
 # ==========================================
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 
@@ -400,19 +410,19 @@ if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1,1.2,1])
     with c2:
         st.markdown("<br><br><br><br>", unsafe_allow_html=True)
-        st.markdown('<div class="gemini-header" style="text-align:center;">988 GROUP CRM</div>', unsafe_allow_html=True)
-        st.markdown('<p style="text-align:center; font-size:13px; color:#8e8e8e;">Welcome back. Please sign in to continue.</p>', unsafe_allow_html=True)
+        st.markdown('<div class="gemini-header" style="text-align:center;">988 集团客户管理系统</div>', unsafe_allow_html=True)
+        st.markdown('<p style="text-align:center; font-size:13px; color:#8e8e8e;">欢迎回来，请登录您的账号</p>', unsafe_allow_html=True)
         
         with st.form("login", border=False):
-            u = st.text_input("Username", placeholder="Enter your ID")
-            p = st.text_input("Password", type="password", placeholder="••••••••")
+            u = st.text_input("账号", placeholder="请输入用户名")
+            p = st.text_input("密码", type="password", placeholder="请输入密码")
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.form_submit_button("Sign In →"):
+            if st.form_submit_button("登 录"):
                 user = login_user(u, p)
                 if user:
                     st.session_state.update({'logged_in':True, 'username':u, 'role':user['role'], 'real_name':user['real_name']})
                     st.rerun()
-                else: st.error("Incorrect credentials.")
+                else: st.error("账号或密码错误")
     st.stop()
 
 # ==========================================
@@ -427,33 +437,33 @@ except: CN_USER=""; CN_KEY=""; OPENAI_KEY=""
 # 顶部栏
 c_nav, c_user = st.columns([6, 1])
 with c_nav:
-    st.markdown(f'<div class="gemini-header" style="font-size:20px; margin:0;">Hello, {st.session_state["real_name"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="gemini-header" style="font-size:20px; margin:0;">你好, {st.session_state["real_name"]}</div>', unsafe_allow_html=True)
 with c_user:
-    if st.button("Logout", key="logout"): st.session_state.clear(); st.rerun()
+    if st.button("退出登录", key="logout"): st.session_state.clear(); st.rerun()
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 导航
+# 导航 (中文)
 if st.session_state['role'] == 'admin':
-    menu_map = {"System": "System", "Logs": "Logs", "Team": "Team", "Import": "Import"}
+    menu_map = {"System": "系统监控", "Logs": "活动日志", "Team": "团队管理", "Import": "批量进货"}
     menu_options = ["System", "Logs", "Team", "Import"]
 else:
-    menu_map = {"Workbench": "Tasks"}
+    menu_map = {"Workbench": "销售工作台"}
     menu_options = ["Workbench"]
 
-selected_nav = st.radio("Nav", menu_options, format_func=lambda x: menu_map.get(x, x), horizontal=True, label_visibility="collapsed")
+selected_nav = st.radio("导航菜单", menu_options, format_func=lambda x: menu_map.get(x, x), horizontal=True, label_visibility="collapsed")
 st.divider()
 
 # --- 🖥️ SYSTEM MONITOR (Admin) ---
 if selected_nav == "System" and st.session_state['role'] == 'admin':
-    st.markdown("#### System Health")
+    st.markdown("#### 系统健康状态")
     health = check_api_health(CN_USER, CN_KEY, OPENAI_KEY)
     
     k1, k2, k3 = st.columns(3)
     
     def status_pill(title, is_active, detail):
         dot = "dot-green" if is_active else "dot-red"
-        text = "Operational" if is_active else "Offline"
+        text = "运行正常" if is_active else "连接断开"
         st.markdown(f"""
         <div style="background-color:#1e1f20; padding:20px; border-radius:16px;">
             <div style="font-size:14px; color:#c4c7c5;">{title}</div>
@@ -464,37 +474,38 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
         </div>
         """, unsafe_allow_html=True)
 
-    with k1: status_pill("Database", health['supabase'], "Supabase PostgreSQL")
-    with k2: status_pill("WhatsApp API", health['checknumber'], "CheckNumber.ai")
-    with k3: status_pill("AI Engine", health['openai'], "OpenAI GPT-4o")
+    with k1: status_pill("云数据库", health['supabase'], "Supabase PostgreSQL")
+    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber API")
+    with k3: status_pill("AI 引擎", health['openai'], "OpenAI GPT-4o")
     
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("#### Sandbox Simulation")
+    st.markdown("#### 沙盒模拟测试")
+    st.caption("上传小文件测试流程是否通畅（不写入数据库）。")
     
-    sb_file = st.file_uploader("Upload Test CSV", type=['csv', 'xlsx'])
-    if sb_file and st.button("Run Simulation"):
+    sb_file = st.file_uploader("上传测试文件 (CSV/Excel)", type=['csv', 'xlsx'])
+    if sb_file and st.button("开始模拟"):
         try:
             if sb_file.name.endswith('.csv'): df = pd.read_csv(sb_file)
             else: df = pd.read_excel(sb_file)
-            st.info(f"Loaded {len(df)} rows. Processing sample...")
+            st.info(f"读取到 {len(df)} 行，正在处理...")
             
             client = OpenAI(api_key=OPENAI_KEY)
-            with st.status("Running Pipeline...", expanded=True) as s:
-                s.write("Extracting numbers...")
+            with st.status("正在运行流水线...", expanded=True) as s:
+                s.write("正在提取号码...")
                 nums = []
                 for _, r in df.head(5).iterrows(): nums.extend(extract_all_numbers(r))
-                s.write(f"Found: {nums}")
+                s.write(f"提取结果: {nums}")
                 
-                s.write("Validating WhatsApp...")
+                s.write("正在验证 WhatsApp...")
                 res = process_checknumber_task(nums, CN_KEY, CN_USER)
                 valid = [p for p in nums if res.get(p)=='valid']
-                s.write(f"Valid: {valid}")
+                s.write(f"有效号码: {valid}")
                 
                 if valid:
-                    s.write("Generating AI Draft...")
-                    msg = get_ai_message_sniper(client, "Test Store", "http://test.com", "Admin")
-                    s.write(f"Draft: {msg}")
-                s.update(label="Simulation Complete", state="complete")
+                    s.write("正在生成 AI 话术...")
+                    msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员")
+                    s.write(f"话术演示: {msg}")
+                s.update(label="模拟完成", state="complete")
         except Exception as e: st.error(str(e))
 
 # --- 💼 WORKBENCH (Sales) ---
@@ -505,25 +516,25 @@ elif selected_nav == "Workbench":
     c_stat, c_action = st.columns([2, 1])
     with c_stat:
         done = sum(1 for x in my_leads if x.get('is_contacted'))
-        st.metric("Daily Progress", f"{done} / {total}")
+        st.metric("今日进度", f"{done} / {total}")
         st.progress(min(done/total, 1.0))
         
     with c_action:
         st.markdown("<br>", unsafe_allow_html=True)
         if curr < total:
-            if st.button(f"Fetch Tasks ({total-curr})"):
+            if st.button(f"领取任务 (剩余 {total-curr} 个)"):
                 _, status = claim_daily_tasks(st.session_state['username'])
-                if status=="empty": st.error("Pool Empty")
+                if status=="empty": st.error("公池已空，请联系管理员")
                 else: st.rerun()
         else:
-            st.success("Quota Full")
+            st.success("今日已领满")
 
-    st.markdown("#### Task List")
-    tabs = st.tabs(["Active", "Completed"])
+    st.markdown("#### 任务列表")
+    tabs = st.tabs(["待跟进", "已完成"])
     
     with tabs[0]:
         todos = [x for x in my_leads if not x.get('is_contacted')]
-        if not todos: st.caption("No active tasks.")
+        if not todos: st.caption("没有待办任务")
         for item in todos:
             with st.expander(f"{item['shop_name']}", expanded=True):
                 st.write(item['ai_message'])
@@ -533,13 +544,13 @@ elif selected_nav == "Workbench":
                 if key not in st.session_state: st.session_state[key] = False
                 
                 if not st.session_state[key]:
-                    if c1.button("Get Link", key=f"btn_{item['id']}"):
+                    if c1.button("获取链接", key=f"btn_{item['id']}"):
                         st.session_state[key] = True; st.rerun()
-                    c2.button("Complete", disabled=True, key=f"dis_{item['id']}")
+                    c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
                 else:
                     url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
-                    c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;'>Open WhatsApp ↗</a>", unsafe_allow_html=True)
-                    if c2.button("Mark Done", key=f"fin_{item['id']}"):
+                    c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
+                    if c2.button("确认完成", key=f"fin_{item['id']}"):
                         mark_lead_complete_secure(item['id'])
                         del st.session_state[key]; st.rerun()
 
@@ -548,36 +559,37 @@ elif selected_nav == "Workbench":
         if dones:
             df = pd.DataFrame(dones)
             df['time'] = pd.to_datetime(df['completed_at']).dt.strftime('%H:%M')
-            st.dataframe(df[['shop_name', 'phone', 'time']], use_container_width=True)
-        else: st.caption("No completed tasks.")
+            df_display = df[['shop_name', 'phone', 'time']].rename(columns={'shop_name':'店铺名', 'phone':'电话', 'time':'时间'})
+            st.dataframe(df_display, use_container_width=True)
+        else: st.caption("暂无完成记录")
 
 # --- 📅 LOGS (Admin) ---
 elif selected_nav == "Logs":
-    st.markdown("#### Activity Logs")
-    d = st.date_input("Date", date.today())
+    st.markdown("#### 活动日志监控")
+    d = st.date_input("选择日期", date.today())
     if d:
         c, f = get_daily_logs(d.isoformat())
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("Claimed")
+            st.markdown("领取记录")
             if not c.empty: st.dataframe(c, use_container_width=True)
-            else: st.caption("No Data")
+            else: st.caption("无数据")
         with col2:
-            st.markdown("Finished")
+            st.markdown("完成记录")
             if not f.empty: st.dataframe(f, use_container_width=True)
-            else: st.caption("No Data")
+            else: st.caption("无数据")
 
 # --- 👥 TEAM (Admin) ---
 elif selected_nav == "Team":
     users = pd.DataFrame(supabase.table('users').select("*").execute().data)
     c1, c2 = st.columns([1, 2])
     with c1:
-        u = st.radio("Staff", users['username'].tolist(), label_visibility="collapsed")
+        u = st.radio("员工列表", users['username'].tolist(), label_visibility="collapsed")
         st.markdown("---")
-        with st.expander("New User"):
+        with st.expander("新增员工"):
             with st.form("new"):
-                nu = st.text_input("Username"); np = st.text_input("Password", type="password"); nn = st.text_input("Name")
-                if st.form_submit_button("Create"): create_user(nu, np, nn); st.rerun()
+                nu = st.text_input("用户名"); np = st.text_input("密码", type="password"); nn = st.text_input("真实姓名")
+                if st.form_submit_button("创建账号"): create_user(nu, np, nn); st.rerun()
     
     with c2:
         if u:
@@ -586,74 +598,70 @@ elif selected_nav == "Team":
             perf = get_user_daily_performance(u)
             
             st.markdown(f"### {info['real_name']}")
-            st.caption(f"Last Active: {str(info.get('last_seen','-'))[:16]}")
+            st.caption(f"账号: {info['username']} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
             
             k1, k2 = st.columns(2)
-            k1.metric("Total Claimed", tc)
-            k2.metric("Total Done", td)
+            k1.metric("历史总领取", tc)
+            k2.metric("历史总完成", td)
             
-            t1, t2, t3 = st.tabs(["Performance", "History", "Settings"])
+            t1, t2, t3 = st.tabs(["每日绩效", "详细清单", "账号设置"])
             
             with t1:
-                if not perf.empty:
-                    st.bar_chart(perf)
-                else:
-                    st.caption("No Data")
+                if not perf.empty: st.bar_chart(perf)
+                else: st.caption("暂无数据")
             
             with t2:
-                if not hist.empty:
-                    st.dataframe(hist, use_container_width=True)
-                else:
-                    st.caption("No Data")
+                if not hist.empty: st.dataframe(hist, use_container_width=True)
+                else: st.caption("暂无数据")
             
             with t3:
-                if st.button("Delete User & Recycle Tasks"):
+                st.markdown("**危险操作**")
+                if st.button("删除账号并回收任务"):
                     delete_user_and_recycle(u); st.rerun()
 
 # --- 📥 IMPORT (Admin) ---
 elif selected_nav == "Import":
     pool = get_public_pool_count()
     if pool < CONFIG["LOW_STOCK_THRESHOLD"]:
-        st.error(f"Low Stock Warning: Only {pool} leads remaining.")
+        st.error(f"库存告急警告：公共池仅剩 {pool} 个客户！")
     else:
-        st.metric("Public Pool", pool)
+        st.metric("公共池库存", pool)
     
-    with st.expander("Recycle Tool"):
-        if st.button("Recycle Expired Tasks"):
+    with st.expander("每日归仓工具"):
+        if st.button("一键回收过期任务"):
             n = recycle_expired_tasks()
-            st.success(f"Recycled {n}")
+            st.success(f"已回收 {n} 个任务")
             
     st.markdown("---")
-    st.markdown("#### Upload Data")
-    f = st.file_uploader("CSV/Excel", type=['csv', 'xlsx'])
+    st.markdown("#### 批量进货")
+    f = st.file_uploader("上传文件 (CSV/Excel)", type=['csv', 'xlsx'])
     if f:
         df = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
-        st.caption(f"{len(df)} rows")
-        if st.button("Process & Import"):
+        st.caption(f"解析到 {len(df)} 行数据")
+        if st.button("开始清洗入库"):
             client = OpenAI(api_key=OPENAI_KEY)
-            with st.status("Processing...", expanded=True) as s:
+            with st.status("正在处理...", expanded=True) as s:
                 df=df.astype(str)
                 phones = set()
                 rmap = {}
                 for i, r in df.iterrows():
                     for p in extract_all_numbers(r): phones.add(p); rmap.setdefault(p, []).append(i)
                 
-                s.write(f"Extracted {len(phones)} numbers")
+                s.write(f"提取到 {len(phones)} 个独立号码")
                 plist = list(phones); valid = []
                 for i in range(0, len(plist), 500):
                     batch = plist[i:i+500]
                     res = process_checknumber_task(batch, CN_KEY, CN_USER)
                     valid.extend([p for p in batch if res.get(p)=='valid'])
                 
-                s.write(f"Valid: {len(valid)}. Generating AI...")
+                s.write(f"有效号码 {len(valid)} 个，生成话术中...")
                 rows = []
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]
-                    # 简单容错：假设第1列是Link，第2列是Shop
                     lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
                     msg = get_ai_message_sniper(client, shp, lnk, "Sales")
                     rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":msg})
                     if len(rows)>=100: admin_bulk_upload_to_pool(rows); rows=[]
                 if rows: admin_bulk_upload_to_pool(rows)
-                s.update(label="Done", state="complete")
+                s.update(label="入库完成", state="complete")
             time.sleep(1); st.rerun()
