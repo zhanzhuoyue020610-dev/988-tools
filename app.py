@@ -34,7 +34,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑 (保持不变)
+# ☁️ 数据库与核心逻辑
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -217,7 +217,8 @@ def admin_bulk_upload_to_pool(leads_data):
         return True
     except: return False
 
-def claim_daily_tasks(username, real_name, client):
+# 🔥 核心修复：移除了 real_name 参数，只接收 username 和 client
+def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
@@ -233,6 +234,7 @@ def claim_daily_tasks(username, real_name, client):
         
         with st.status(f"正在为 {username} 生成专属文案...", expanded=True) as status:
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                # 🔥 这里直接使用 username 作为 rep_name
                 futures = [executor.submit(generate_and_update_task, task, client, username) for task in fresh_tasks]
                 concurrent.futures.wait(futures)
             status.update(label="文案生成完毕！", state="complete")
@@ -356,12 +358,11 @@ st.markdown("""
         --text-primary: #e3e3e3;       
         --text-secondary: #8e8e8e;     
         --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
-        --btn-primary: linear-gradient(90deg, #6366f1, #818cf8); /* 星云紫 */
+        --btn-primary: linear-gradient(90deg, #6366f1, #818cf8);
         --btn-hover: linear-gradient(90deg, #818cf8, #a5b4fc);
         --btn-text: #ffffff;           
     }
 
-    /* 1. ⚛️ 核心修复：全局文字光栅化 (去除黑框) */
     * {
         text-shadow: 0 0 0 transparent !important;
         -webkit-text-stroke: 0px !important;
@@ -371,16 +372,15 @@ st.markdown("""
         text-rendering: geometricPrecision !important;
     }
 
-    /* 2. 基础重置 */
     .stApp, div, section, header, footer, button, input, label, p, h1, h2, h3 {
         background-color: var(--bg-color);
         color: var(--text-primary);
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
+        text-shadow: none !important;
     }
     
     header { visibility: hidden !important; } 
     
-    /* 标题排版 */
     .gemini-header {
         font-weight: 600; font-size: 28px;
         background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
@@ -388,18 +388,15 @@ st.markdown("""
     }
     .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
 
-    /* 积分胶囊 */
     .points-pill {
         background-color: rgba(255, 255, 255, 0.05); color: #e3e3e3; border: 1px solid rgba(255, 255, 255, 0.1);
         padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace;
     }
 
-    /* 导航栏 */
     div[data-testid="stRadio"] > div { background-color: var(--surface-color) !important; border: none; padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
-    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
+    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; text-shadow: none !important; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
 
-    /* 容器 */
     div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { 
         background-color: var(--surface-color) !important; 
         border: 1px solid #333 !important; 
@@ -409,8 +406,7 @@ st.markdown("""
     div[data-testid="stExpander"] details { border: none !important; }
     div[data-testid="stExpander"] summary { color: white !important; }
     
-    /* 按钮系统 - 星云紫 */
-    button { color: var(--btn-text) !important; }
+    button { color: var(--btn-text) !important; text-shadow: none !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
         background: var(--btn-primary) !important; 
         color: var(--btn-text) !important; 
@@ -427,7 +423,6 @@ st.markdown("""
         box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important;
     }
 
-    /* 输入框 */
     div[data-baseweb="input"], div[data-baseweb="select"] { 
         background-color: var(--input-bg) !important; 
         border: 1px solid #444 !important; 
@@ -437,12 +432,10 @@ st.markdown("""
     input { color: white !important; caret-color: #6366f1; }
     ::placeholder { color: #5f6368 !important; }
     
-    /* 文件上传 */
     [data-testid="stFileUploader"] { background-color: transparent !important; }
     [data-testid="stFileUploader"] section { background-color: var(--input-bg) !important; border: 1px dashed #555 !important; }
     [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; box-shadow: none !important; }
     
-    /* 告急提醒 */
     .error-alert-box { 
         background-color: rgba(255, 95, 86, 0.15); 
         border: 1px solid #ff5f56; 
@@ -452,7 +445,6 @@ st.markdown("""
         margin-bottom: 20px; 
     }
 
-    /* 表格 */
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: var(--surface-color) !important; color: var(--text-secondary); }
     .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
     
@@ -587,7 +579,7 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
                 s.write(f"提取结果: {nums}"); res = process_checknumber_task(nums, CN_KEY, CN_USER)
                 valid = [p for p in nums if res.get(p)=='valid']; s.write(f"有效号码: {valid}")
                 if valid:
-                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员", debug_mode=True)
+                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员")
                     s.write(f"生成结果: {msg}")
                 s.update(label="模拟完成", state="complete")
         except Exception as e: st.error(str(e))
