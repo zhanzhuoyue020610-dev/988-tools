@@ -26,7 +26,10 @@ CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
     "DAILY_QUOTA": 25,
     "LOW_STOCK_THRESHOLD": 300,
-    "POINTS_PER_TASK": 10
+    "POINTS_PER_TASK": 10,
+    "MAX_RETRIES": 3, # 🔥 最大重试次数
+    # 🔥 定义保底文案特征 (用于识别)
+    "FALLBACK_SIGNATURE": "Super Admin (988 Group)" 
 }
 
 # ==========================================
@@ -80,11 +83,9 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 修改：暖心文案生成 ---
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
         try:
-            # 修改提示词为“温暖治愈”
             prompt = "你是专业的职场心理咨询师。请生成一句温暖、治愈、给人内心力量的中文短句，不超过25个字。不要带引号，语气要平和高级。"
             res = client.chat.completions.create(
                 model="gpt-4o", 
@@ -96,6 +97,90 @@ def get_daily_motivation(client):
             st.session_state["motivation_quote"] = "心有繁星，沐光而行。"
     return st.session_state["motivation_quote"]
 
+# --- 🔥 核心：AI 狙击手与自愈系统 ---
+def get_ai_message_sniper(client, shop, link, rep_name):
+    # 基础校验
+    if not shop or str(shop).lower() in ['nan', 'none', '']:
+        return "ERROR_EMPTY_DATA" # 标记为数据缺失
+        
+    prompt = f"Role: Supply Chain Sales '{rep_name}'. Target: {shop}. Link: {link}. Write short Russian WhatsApp intro offering sourcing services."
+    try:
+        res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
+        return res.choices[0].message.content
+    except Exception as e:
+        # 返回具体的错误信息以便诊断
+        return f"ERROR_API_FAIL: {str(e)}"
+
+def auto_heal_task(task_id, shop, link, current_retries, client):
+    """
+    🔥 自愈函数：尝试重写保底文案
+    返回：(Success: bool, NewMessage: str, ErrorLog: str)
+    """
+    # 1. 检查是否超过最大重试次数
+    if current_retries >= CONFIG["MAX_RETRIES"]:
+        return False, None, "MAX_RETRIES_EXCEEDED"
+
+    # 2. 尝试调用 AI
+    new_msg = get_ai_message_sniper(client, shop, link, "Sales")
+    
+    # 3. 判断结果
+    if "ERROR_" in new_msg:
+        # AI 再次失败
+        return False, new_msg, new_msg # msg 本身包含了错误代码
+    elif CONFIG["FALLBACK_SIGNATURE"] in new_msg:
+        # 居然又生成了保底文案 (概率极低但逻辑上要防守)
+        return False, new_msg, "AI_GENERATED_FALLBACK_AGAIN"
+    else:
+        # 成功！
+        return True, new_msg, None
+
+def scan_and_heal_leads(leads_list, client):
+    """
+    🔥 扫描一批线索，发现保底文案立即修复
+    """
+    if not leads_list: return []
+    
+    healed_leads = []
+    
+    for lead in leads_list:
+        # 检查是否包含保底特征
+        if CONFIG["FALLBACK_SIGNATURE"] in lead['ai_message']:
+            # 触发自愈逻辑
+            success, new_msg, err_code = auto_heal_task(
+                lead['id'], lead['shop_name'], lead['shop_link'], 
+                lead.get('retry_count', 0), client
+            )
+            
+            if success:
+                # 修复成功：更新数据库，更新内存对象
+                supabase.table('leads').update({
+                    'ai_message': new_msg,
+                    'retry_count': lead.get('retry_count', 0) + 1,
+                    'error_log': 'Fixed by Auto-Healer'
+                }).eq('id', lead['id']).execute()
+                
+                lead['ai_message'] = new_msg # 更新内存供前端显示
+                healed_leads.append(lead)
+            else:
+                # 修复失败：增加计数，记录错误
+                new_count = lead.get('retry_count', 0) + 1
+                is_frozen = True if new_count >= CONFIG["MAX_RETRIES"] else False
+                
+                supabase.table('leads').update({
+                    'retry_count': new_count,
+                    'is_frozen': is_frozen,
+                    'error_log': err_code
+                }).eq('id', lead['id']).execute()
+                
+                # 如果冻结了，从当前列表中移除，不给业务员展示坏数据
+                if not is_frozen:
+                    healed_leads.append(lead)
+        else:
+            healed_leads.append(lead)
+            
+    return healed_leads
+
+# --- 数据查询逻辑 ---
 def get_user_daily_performance(username):
     if not supabase: return pd.DataFrame()
     try:
@@ -130,9 +215,21 @@ def get_user_historical_data(username):
 def get_public_pool_count():
     if not supabase: return 0
     try:
-        res = supabase.table('leads').select('id', count='exact').is_('assigned_to', 'null').execute()
+        # 只统计未冻结的
+        res = supabase.table('leads').select('id', count='exact')\
+            .is_('assigned_to', 'null')\
+            .eq('is_frozen', False)\
+            .execute()
         return res.count
     except: return 0
+
+def get_frozen_leads_count():
+    """获取报警数据：被冻结的任务数"""
+    if not supabase: return 0, []
+    try:
+        res = supabase.table('leads').select('id, shop_name, error_log, retry_count').eq('is_frozen', True).execute()
+        return len(res.data), res.data
+    except: return 0, []
 
 def recycle_expired_tasks():
     if not supabase: return 0
@@ -155,10 +252,12 @@ def admin_bulk_upload_to_pool(leads_data):
     try:
         rows = []
         for item in leads_data:
+            # 初始状态：重试0，未冻结，无错误日志
             rows.append({
                 "shop_name": item['Shop'], "shop_link": item['Link'],
                 "phone": item['Phone'], "ai_message": item['Msg'], 
-                "is_valid": True, "assigned_to": None, "assigned_at": None, "is_contacted": False
+                "is_valid": True, "assigned_to": None, "assigned_at": None, "is_contacted": False,
+                "retry_count": 0, "is_frozen": False, "error_log": None
             })
         chunk_size = 500
         for i in range(0, len(rows), chunk_size):
@@ -166,23 +265,41 @@ def admin_bulk_upload_to_pool(leads_data):
         return True
     except: return False
 
-def claim_daily_tasks(username):
+def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
+    
+    # 1. 检查今日已领
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
+    
+    # 🔥 自查 1：检查业务员手中已有的任务是否有保底文案 (防止漏网之鱼)
+    existing = scan_and_heal_leads(existing, client)
+    
     if current_count >= CONFIG["DAILY_QUOTA"]: return existing, "full"
+    
     needed = CONFIG["DAILY_QUOTA"] - current_count
-    pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').limit(needed).execute().data
+    
+    # 2. 从公池获取 (排除已冻结的)
+    pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').eq('is_frozen', False).limit(needed).execute().data
+    
     if pool_leads:
         ids_to_update = [x['id'] for x in pool_leads]
         supabase.table('leads').update({'assigned_to': username, 'assigned_at': today_str}).in_('id', ids_to_update).execute()
-        existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
-        return existing, "claimed"
+        
+        # 再次拉取最新的 (包含了刚刚分配的)
+        final_list = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
+        
+        # 🔥 自查 2：新领取的任务，立刻进行自检和修复
+        final_list = scan_and_heal_leads(final_list, client)
+        
+        return final_list, "claimed"
     else: return existing, "empty"
 
-def get_todays_leads(username):
+def get_todays_leads(username, client):
     today_str = date.today().isoformat()
-    return supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
+    leads = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
+    # 🔥 自查 3：每次刷新页面查看任务时，顺手检查一下
+    return scan_and_heal_leads(leads, client)
 
 def mark_lead_complete_secure(lead_id, username):
     if not supabase: return
@@ -247,13 +364,6 @@ def process_checknumber_task(phone_list, api_key, user_id):
     except: pass
     return status_map
 
-def get_ai_message_sniper(client, shop, link, rep_name):
-    prompt = f"Role: Supply Chain Sales '{rep_name}'. Target: {shop}. Link: {link}. Write short Russian WhatsApp intro offering sourcing services."
-    try:
-        res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
-        return res.choices[0].message.content
-    except: return "Здравствуйте, мы можем помочь вам с поставками из Китая."
-
 def check_api_health(cn_user, cn_key, openai_key):
     status = {"supabase": False, "checknumber": False, "openai": False, "msg": []}
     try:
@@ -275,7 +385,7 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 UI 主题 (Pure Luxury & Clean)
+# 🎨 UI 主题 (Pure Luxury)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="⚫")
 
@@ -299,32 +409,17 @@ st.markdown("""
     .stApp { background-color: var(--bg-color) !important; color: var(--text-primary) !important; font-family: 'Inter', 'Noto Sans SC', sans-serif !important; }
     header { visibility: hidden !important; } 
     
-    /* 核心：渐变流光文字 (保留给“你好”和Logo) */
     .gemini-header {
         font-weight: 600; font-size: 28px;
         background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         letter-spacing: 1px; margin-bottom: 5px;
     }
     
-    /* 暖心文案样式 - 极简灰 */
-    .warm-quote {
-        font-size: 13px;
-        color: #8e8e8e;
-        letter-spacing: 0.5px;
-        margin-bottom: 25px;
-        font-style: normal;
-    }
+    .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
 
-    /* 积分胶囊 - 纯文字，无图标 */
     .points-pill {
-        background-color: rgba(255, 255, 255, 0.05);
-        color: #e3e3e3;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 6px 16px;
-        border-radius: 4px;
-        font-size: 13px;
-        font-family: 'Inter', monospace;
-        letter-spacing: 0.5px;
+        background-color: rgba(255, 255, 255, 0.05); color: #e3e3e3; border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 6px 16px; border-radius: 4px; font-size: 13px; font-family: 'Inter', monospace; letter-spacing: 0.5px;
     }
 
     div[data-testid="stRadio"] > div { background-color: var(--surface-color); border: none; padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
@@ -334,7 +429,6 @@ st.markdown("""
     div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { background-color: var(--surface-color) !important; border: none !important; border-radius: 12px; padding: 10px; }
     div[data-testid="stExpander"] details { border: none !important; }
     
-    /* 按钮 - 深蓝实色 */
     button { color: var(--btn-text) !important; }
     div.stButton > button, div.stFormSubmitButton > button { background-color: var(--btn-primary) !important; color: var(--btn-text) !important; border: none !important; border-radius: 50px !important; padding: 10px 24px !important; font-weight: 500; letter-spacing: 1px; transition: all 0.2s ease; }
     div.stButton > button:hover, div.stFormSubmitButton > button:hover { background-color: var(--btn-hover) !important; transform: translateY(-1px); }
@@ -351,10 +445,19 @@ st.markdown("""
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: var(--surface-color) !important; color: var(--text-secondary); }
     .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
     
-    /* 纯色圆点状态 */
     .status-dot { height: 6px; width: 6px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle;}
     .dot-green { background-color: #6dd58c; }
     .dot-red { background-color: #ff5f56; }
+    
+    /* 错误报警框 */
+    .error-alert-box {
+        background-color: rgba(255, 95, 86, 0.1);
+        border: 1px solid #ff5f56;
+        color: #ff5f56;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
     
     h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
     p, span, div, label { color: #c4c7c5 !important; }
@@ -372,7 +475,7 @@ if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1,1.2,1])
     with c2:
         st.markdown("<br><br><br><br>", unsafe_allow_html=True)
-        st.markdown('<div class="gemini-header" style="text-align:center;">988 GROUP CRM</div>', unsafe_allow_html=True)
+        st.markdown('<div class="gemini-header" style="text-align:center;">988 集团客户管理系统</div>', unsafe_allow_html=True)
         st.markdown('<div class="warm-quote" style="text-align:center;">专业 · 高效 · 全球化</div>', unsafe_allow_html=True)
         
         with st.form("login", border=False):
@@ -396,22 +499,17 @@ try:
     OPENAI_KEY = st.secrets["OPENAI_KEY"]
 except: CN_USER=""; CN_KEY=""; OPENAI_KEY=""
 
-# 顶部栏 (Gradient Header + Warm Quote)
-client = OpenAI(api_key=OPENAI_KEY)
+client = OpenAI(api_key=OPENAI_KEY) # 初始化 AI 客户端用于自愈
 quote = get_daily_motivation(client)
 points = get_user_points(st.session_state['username'])
 
-# 布局：极简顶部
+# 顶部栏
 c_title, c_user = st.columns([4, 2])
-
 with c_title:
-    # 核心：保留用户喜欢的渐变打招呼
     st.markdown(f'<div class="gemini-header">你好, {st.session_state["real_name"]}</div>', unsafe_allow_html=True)
-    # 暖心文案 (放在下方，极简灰字，不抢视觉)
     st.markdown(f'<div class="warm-quote">{quote}</div>', unsafe_allow_html=True)
 
 with c_user:
-    # 右侧：积分 + 退出，极简胶囊风格
     st.markdown(f"""
     <div style="text-align:right; margin-top:5px;">
         <span class="points-pill">积分: {points}</span>
@@ -419,7 +517,6 @@ with c_user:
         <span style="font-size:14px; color:#e3e3e3;">{st.session_state['role'].upper()}</span>
     </div>
     """, unsafe_allow_html=True)
-    # 退出按钮在下方，利用 streamlit 的 button
     c_null, c_out = st.columns([3, 1])
     with c_out:
         if st.button("退出", key="logout"): st.session_state.clear(); st.rerun()
@@ -439,6 +536,25 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 # --- 🖥️ SYSTEM MONITOR (Admin) ---
 if selected_nav == "System" and st.session_state['role'] == 'admin':
+    
+    # 🔥 报警中心：检测是否有被冻结的任务
+    frozen_count, frozen_leads = get_frozen_leads_count()
+    if frozen_count > 0:
+        st.markdown(f"""
+        <div class="error-alert-box">
+            🚨 <b>系统警报：有 {frozen_count} 个任务因连续重试 3 次失败而被冻结！</b><br>
+            原因分析：通常是因为 OpenAI API 欠费、网络超时，或该客户的店铺信息缺失导致 AI 无法生成。<br>
+            建议操作：1. 检查 API 状态；2. 查看下方具体错误日志；3. 手动删除或修复数据。
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.expander(f"查看 {frozen_count} 个冻结任务详情", expanded=True):
+            st.dataframe(pd.DataFrame(frozen_leads))
+            if st.button("🗑️ 清除所有冻结任务 (慎点)"):
+                supabase.table('leads').delete().eq('is_frozen', True).execute()
+                st.success("已清除")
+                time.sleep(1); st.rerun()
+
     st.markdown("#### 系统健康状态")
     health = check_api_health(CN_USER, CN_KEY, OPENAI_KEY)
     
@@ -446,68 +562,96 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
     def status_pill(title, is_active, detail):
         dot = "dot-green" if is_active else "dot-red"
         text = "运行正常" if is_active else "连接异常"
-        st.markdown(f"""<div style="background-color:#1e1f20; padding:20px; border-radius:16px;"><div style="font-size:14px; color:#c4c7c5;">{title}</div><div style="margin-top:10px; font-size:16px; color:white; font-weight:500;"><span class="status-dot {dot}"></span>{text}</div><div style="font-size:12px; color:#8e8e8e; margin-top:5px;">{detail}</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background-color:#1e1f20; padding:20px; border-radius:16px;">
+            <div style="font-size:14px; color:#c4c7c5;">{title}</div>
+            <div style="margin-top:10px; font-size:16px; color:white; font-weight:500;">
+                <span class="status-dot {dot}"></span>{text}
+            </div>
+            <div style="font-size:12px; color:#8e8e8e; margin-top:5px;">{detail}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    with k1: status_pill("云数据库", health['supabase'], "Supabase")
-    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber")
-    with k3: status_pill("AI 引擎", health['openai'], "OpenAI GPT-4")
+    with k1: status_pill("云数据库", health['supabase'], "Supabase PostgreSQL")
+    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber API")
+    with k3: status_pill("AI 引擎", health['openai'], "OpenAI GPT-4o")
     
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("#### 沙盒模拟")
-    sb_file = st.file_uploader("上传测试文件", type=['csv', 'xlsx'])
+    st.markdown("#### 沙盒模拟测试")
+    sb_file = st.file_uploader("上传测试文件 (CSV/Excel)", type=['csv', 'xlsx'])
     if sb_file and st.button("开始模拟"):
         try:
             if sb_file.name.endswith('.csv'): df = pd.read_csv(sb_file)
             else: df = pd.read_excel(sb_file)
-            st.caption(f"读取到 {len(df)} 行，正在处理...")
-            client = OpenAI(api_key=OPENAI_KEY)
+            st.info(f"读取到 {len(df)} 行，正在处理...")
+            
             with st.status("正在运行流水线...", expanded=True) as s:
-                s.write("提取号码中..."); nums = []
+                s.write("正在提取号码...")
+                nums = []
                 for _, r in df.head(5).iterrows(): nums.extend(extract_all_numbers(r))
                 s.write(f"提取结果: {nums}")
-                s.write("验证号码中..."); res = process_checknumber_task(nums, CN_KEY, CN_USER)
-                valid = [p for p in nums if res.get(p)=='valid']; s.write(f"有效号码: {valid}")
+                
+                s.write("正在验证 WhatsApp...")
+                res = process_checknumber_task(nums, CN_KEY, CN_USER)
+                valid = [p for p in nums if res.get(p)=='valid']
+                s.write(f"有效号码: {valid}")
+                
                 if valid:
-                    s.write("生成话术中..."); msg = get_ai_message_sniper(client, "测试", "http://test.com", "管理员")
-                    s.write(f"话术演示: {msg}")
+                    s.write("正在生成 AI 话术...")
+                    msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员")
+                    
+                    # 模拟自查
+                    if CONFIG["FALLBACK_SIGNATURE"] in msg:
+                        s.write("⚠️ 警告：生成了保底文案！系统将自动重试...")
+                    else:
+                        s.write(f"✅ 生成成功: {msg}")
                 s.update(label="模拟完成", state="complete")
         except Exception as e: st.error(str(e))
 
 # --- 💼 WORKBENCH (Sales) ---
 elif selected_nav == "Workbench":
-    my_leads = get_todays_leads(st.session_state['username'])
+    # 传递 client 进去进行实时自查
+    my_leads = get_todays_leads(st.session_state['username'], client)
     total, curr = CONFIG["DAILY_QUOTA"], len(my_leads)
     
     c_stat, c_action = st.columns([2, 1])
     with c_stat:
         done = sum(1 for x in my_leads if x.get('is_contacted'))
-        st.caption(f"今日进度: {done} / {total}")
+        st.metric("今日进度", f"{done} / {total}")
         st.progress(min(done/total, 1.0))
         
     with c_action:
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
         if curr < total:
-            if st.button(f"领取任务 (余 {total-curr})"):
-                _, status = claim_daily_tasks(st.session_state['username'])
-                if status=="empty": st.error("公池已空")
+            # 传递 client 进去进行实时自查
+            if st.button(f"领取任务 (剩余 {total-curr} 个)"):
+                _, status = claim_daily_tasks(st.session_state['username'], client)
+                if status=="empty": st.error("公池已空，请联系管理员")
                 else: st.rerun()
-        else: st.info("任务已领满")
+        else:
+            st.success("今日已领满")
 
-    st.markdown("#### 任务中心")
-    # 纯文字 Tab，无 Emoji
-    tabs = st.tabs(["待办事项", "已完成"])
+    st.markdown("#### 任务列表")
+    tabs = st.tabs(["待跟进", "已完成"])
     
     with tabs[0]:
         todos = [x for x in my_leads if not x.get('is_contacted')]
-        if not todos: st.caption("暂无待办任务")
+        if not todos: st.caption("没有待办任务")
         for item in todos:
             with st.expander(f"{item['shop_name']}", expanded=True):
-                st.write(item['ai_message'])
+                # 再次检查，如果是保底文案，显示警告
+                if CONFIG["FALLBACK_SIGNATURE"] in item['ai_message']:
+                    st.warning("⚠️ 此文案为保底文案，正在尝试自动修复... (请稍后刷新)")
+                else:
+                    st.write(item['ai_message'])
+                
                 c1, c2 = st.columns(2)
                 key = f"clk_{item['id']}"
                 if key not in st.session_state: st.session_state[key] = False
+                
                 if not st.session_state[key]:
-                    if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
+                    if c1.button("获取链接", key=f"btn_{item['id']}"):
+                        st.session_state[key] = True; st.rerun()
                     c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
                 else:
                     url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
@@ -522,7 +666,8 @@ elif selected_nav == "Workbench":
         if dones:
             df = pd.DataFrame(dones)
             df['time'] = pd.to_datetime(df['completed_at']).dt.strftime('%H:%M')
-            st.dataframe(df[['shop_name', 'phone', 'time']].rename(columns={'shop_name':'店铺','phone':'电话','time':'时间'}), use_container_width=True)
+            df_display = df[['shop_name', 'phone', 'time']].rename(columns={'shop_name':'店铺名', 'phone':'电话', 'time':'时间'})
+            st.dataframe(df_display, use_container_width=True)
         else: st.caption("暂无完成记录")
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -576,7 +721,7 @@ elif selected_nav == "Team":
             st.markdown(f"### {info['real_name']}")
             st.caption(f"账号: {info['username']} | 积分: {info.get('points', 0)} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
             k1, k2 = st.columns(2)
-            k1.metric("历史领取", tc); k2.metric("历史完成", td)
+            k1.metric("历史总领取", tc); k2.metric("历史总完成", td)
             t1, t2, t3 = st.tabs(["每日绩效", "详细清单", "账号设置"])
             with t1:
                 if not perf.empty: st.bar_chart(perf); st.dataframe(perf, use_container_width=True)
@@ -585,21 +730,22 @@ elif selected_nav == "Team":
                 if not hist.empty: st.dataframe(hist, use_container_width=True)
                 else: st.caption("暂无数据")
             with t3:
+                st.markdown("**危险操作**")
                 if st.button("删除账号并回收任务"): delete_user_and_recycle(u); st.rerun()
 
 # --- 📥 IMPORT (Admin) ---
 elif selected_nav == "Import":
     pool = get_public_pool_count()
-    if pool < CONFIG["LOW_STOCK_THRESHOLD"]: st.error(f"库存告急：仅剩 {pool} 个客户")
+    if pool < CONFIG["LOW_STOCK_THRESHOLD"]: st.error(f"库存告急警告：公共池仅剩 {pool} 个客户！")
     else: st.metric("公共池库存", pool)
     
     with st.expander("每日归仓工具"):
-        if st.button("回收过期任务"):
+        if st.button("一键回收过期任务"):
             n = recycle_expired_tasks(); st.success(f"已回收 {n} 个")
             
     st.markdown("---")
     st.markdown("#### 批量进货")
-    f = st.file_uploader("上传文件", type=['csv', 'xlsx'])
+    f = st.file_uploader("上传文件 (CSV/Excel)", type=['csv', 'xlsx'])
     if f:
         df = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
         st.caption(f"解析到 {len(df)} 行数据")
@@ -618,8 +764,19 @@ elif selected_nav == "Import":
                 rows = []; bar = st.progress(0)
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
+                    
+                    # 初始生成
                     msg = get_ai_message_sniper(client, shp, lnk, "Sales")
-                    rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":msg})
+                    
+                    # 🔥 进货时立即自检
+                    if CONFIG["FALLBACK_SIGNATURE"] in msg:
+                        # 尝试原地修复一次
+                        _, msg, _ = auto_heal_task("new", shp, lnk, 0, client)
+                    
+                    rows.append({
+                        "Shop":shp, "Link":lnk, "Phone":p, "Msg":msg,
+                        "retry_count": 0, "is_frozen": False
+                    })
                     if len(rows)>=100: admin_bulk_upload_to_pool(rows); rows=[]
                     bar.progress((idx+1)/len(valid))
                 if rows: admin_bulk_upload_to_pool(rows)
