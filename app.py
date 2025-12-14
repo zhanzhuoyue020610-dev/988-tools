@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore")
 CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
     "DAILY_QUOTA": 25,  # 每天限领额度
-    "LOW_STOCK_THRESHOLD": 300 # 🔥 库存报警阈值
+    "LOW_STOCK_THRESHOLD": 300 # 库存报警阈值
 }
 
 # ==========================================
@@ -66,48 +66,58 @@ def create_user(u, p, n, role="sales"):
         return True
     except: return False
 
-# --- 🔥 新增：库存查询与回收逻辑 ---
+# --- 🔥 新增：获取用户详细历史数据 ---
+def get_user_historical_data(username):
+    """获取特定业务员的历史总数据和处理清单"""
+    if not supabase: return 0, 0, pd.DataFrame()
+    try:
+        # 1. 历史总领取 (Count all rows assigned to user)
+        res_claimed = supabase.table('leads').select('id', count='exact').eq('assigned_to', username).execute()
+        total_claimed = res_claimed.count
+
+        # 2. 历史总完成 (Count all rows assigned + contacted)
+        res_done = supabase.table('leads').select('id', count='exact').eq('assigned_to', username).eq('is_contacted', True).execute()
+        total_done = res_done.count
+
+        # 3. 处理过的客户列表 (限制最近 2000 条以防卡顿)
+        # 字段：店铺名、电话、链接、完成时间
+        res_list = supabase.table('leads').select('shop_name, phone, shop_link, completed_at')\
+            .eq('assigned_to', username)\
+            .eq('is_contacted', True)\
+            .order('completed_at', desc=True)\
+            .limit(2000)\
+            .execute()
+        
+        df_history = pd.DataFrame(res_list.data)
+        return total_claimed, total_done, df_history
+    except Exception as e:
+        print(e)
+        return 0, 0, pd.DataFrame()
+
+# --- 库存与回收 ---
 def get_public_pool_count():
-    """获取公共池剩余数量"""
     if not supabase: return 0
     try:
-        # count='exact' 用于获取精确数量
         res = supabase.table('leads').select('id', count='exact').is_('assigned_to', 'null').execute()
         return res.count
     except: return 0
 
 def recycle_expired_tasks():
-    """
-    ♻️ 每日归仓逻辑：
-    将所有分配时间早于今天 (assigned_at < today)，且未完成 (is_contacted = False) 的任务，
-    强制重置回公共池。
-    """
     if not supabase: return 0
     today_str = date.today().isoformat()
     try:
-        # 1. 查找过期未完成任务
-        # lt = less than (小于今天)
         res = supabase.table('leads').update({
-            'assigned_to': None,
-            'assigned_at': None
+            'assigned_to': None, 'assigned_at': None
         }).lt('assigned_at', today_str).eq('is_contacted', False).execute()
-        
-        # Supabase update 返回的 data 是被更新的行列表
         return len(res.data)
-    except Exception as e:
-        print(e)
-        return 0
+    except: return 0
 
 def delete_user_and_recycle(username):
-    """删除业务员，并将其未完成的任务全部踢回公共池"""
     if not supabase: return False
     try:
         supabase.table('leads').update({
-            'assigned_to': None,
-            'assigned_at': None,
-            'is_contacted': False
+            'assigned_to': None, 'assigned_at': None, 'is_contacted': False
         }).eq('assigned_to', username).eq('is_contacted', False).execute()
-        
         supabase.table('users').delete().eq('username', username).execute()
         return True
     except: return False
@@ -118,14 +128,9 @@ def admin_bulk_upload_to_pool(leads_data):
         rows = []
         for item in leads_data:
             rows.append({
-                "shop_name": item['Shop'], 
-                "shop_link": item['Link'],
-                "phone": item['Phone'], 
-                "ai_message": item['Msg'], 
-                "is_valid": True,
-                "assigned_to": None,
-                "assigned_at": None,
-                "is_contacted": False
+                "shop_name": item['Shop'], "shop_link": item['Link'],
+                "phone": item['Phone'], "ai_message": item['Msg'], 
+                "is_valid": True, "assigned_to": None, "assigned_at": None, "is_contacted": False
             })
         chunk_size = 500
         for i in range(0, len(rows), chunk_size):
@@ -133,48 +138,38 @@ def admin_bulk_upload_to_pool(leads_data):
         return True
     except: return False
 
-# --- 主动领取逻辑 ---
+# --- 业务员逻辑 ---
 def claim_daily_tasks(username):
     today_str = date.today().isoformat()
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
-    
     if current_count >= CONFIG["DAILY_QUOTA"]: return existing, "full"
-    
     needed = CONFIG["DAILY_QUOTA"] - current_count
     pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').limit(needed).execute().data
-    
     if pool_leads:
         ids_to_update = [x['id'] for x in pool_leads]
         supabase.table('leads').update({'assigned_to': username, 'assigned_at': today_str}).in_('id', ids_to_update).execute()
         existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
         return existing, "claimed"
-    else:
-        return existing, "empty"
+    else: return existing, "empty"
 
 def get_todays_leads(username):
     today_str = date.today().isoformat()
     return supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
 
-# --- 防作弊完成逻辑 ---
 def mark_lead_complete_secure(lead_id):
     if not supabase: return
     now_iso = datetime.now().isoformat()
-    supabase.table('leads').update({
-        'is_contacted': True,
-        'completed_at': now_iso
-    }).eq('id', lead_id).execute()
+    supabase.table('leads').update({'is_contacted': True, 'completed_at': now_iso}).eq('id', lead_id).execute()
 
 # --- 日志逻辑 ---
 def get_daily_logs(query_date):
     if not supabase: return pd.DataFrame(), pd.DataFrame()
-    
     raw_claims = supabase.table('leads').select('assigned_to, assigned_at').eq('assigned_at', query_date).execute().data
     df_claims = pd.DataFrame(raw_claims)
     if not df_claims.empty:
         df_claim_summary = df_claims.groupby('assigned_to').size().reset_index(name='领取数量')
     else: df_claim_summary = pd.DataFrame(columns=['assigned_to', '领取数量'])
-        
     start_dt = f"{query_date}T00:00:00"
     end_dt = f"{query_date}T23:59:59"
     raw_done = supabase.table('leads').select('assigned_to, completed_at').gte('completed_at', start_dt).lte('completed_at', end_dt).execute().data
@@ -182,7 +177,6 @@ def get_daily_logs(query_date):
     if not df_done.empty:
         df_done_summary = df_done.groupby('assigned_to').size().reset_index(name='实际处理')
     else: df_done_summary = pd.DataFrame(columns=['assigned_to', '实际处理'])
-        
     return df_claim_summary, df_done_summary
 
 # --- Helper Functions ---
@@ -243,39 +237,29 @@ st.markdown("""
     .stApp { background-color: #121212 !important; color: #e0e0e0 !important; }
     header { visibility: visible !important; background-color: transparent !important; }
     
-    /* 进度条 */
     .stProgress > div > div > div > div { background-color: #4CAF50 !important; }
     
-    /* 警告条动画 */
+    /* 报警动画 */
     @keyframes pulse {
         0% { background-color: #ff4b4b; }
         50% { background-color: #ff0000; }
         100% { background-color: #ff4b4b; }
     }
     .low-stock-alert {
-        padding: 15px;
-        color: white;
-        font-weight: bold;
-        text-align: center;
-        border-radius: 8px;
-        margin-bottom: 20px;
-        animation: pulse 2s infinite;
-        border: 2px solid #ffcccc;
+        padding: 15px; color: white; font-weight: bold; text-align: center;
+        border-radius: 8px; margin-bottom: 20px; animation: pulse 2s infinite; border: 2px solid #ffcccc;
     }
     
-    /* 卡片与容器 */
     div[data-testid="stExpander"], div[data-testid="stForm"], div[data-testid="stDataFrame"] {
         background-color: #1e1e1e !important; border: 1px solid #333 !important; border-radius: 6px;
     }
-    
     button { color: white !important; }
     div.stButton > button {
         background-color: #0078d4 !important; border: 1px solid #0078d4 !important;
         width: 100%; font-weight: bold;
     }
     button:disabled {
-        background-color: #555 !important; border-color: #555 !important; color: #aaa !important;
-        cursor: not-allowed;
+        background-color: #555 !important; border-color: #555 !important; color: #aaa !important; cursor: not-allowed;
     }
     h1, h2, h3 { color: #fff !important; }
 </style>
@@ -310,7 +294,6 @@ try:
     OPENAI_KEY = st.secrets["OPENAI_KEY"]
 except: CN_USER=""; CN_KEY=""; OPENAI_KEY=""
 
-# Navigation
 st.markdown(f"**👤 {st.session_state['real_name']}** | Role: {st.session_state['role'].upper()}")
 if st.button("Logout", key="logout_top"): st.session_state.clear(); st.rerun()
 
@@ -332,8 +315,8 @@ if selected_nav == "Workbench":
         st.warning(f"⚠️ 你的任务未满！今日指标 {total_task} 个，当前持有 {current_count} 个。")
         if st.button(f"📥 立即领取剩余 {total_task - current_count} 个任务"):
             my_leads, status = claim_daily_tasks(st.session_state['username'])
-            if status == "empty": st.error("公池已被领空，请联系管理员补货！")
-            elif status == "full": st.success("任务已领满！")
+            if status == "empty": st.error("公池已被领空！")
+            elif status == "full": st.success("已领满！")
             else: st.success("领取成功！"); st.rerun()
     else: st.success("✅ 今日任务已领满。")
 
@@ -381,15 +364,15 @@ elif selected_nav == "Logs" and st.session_state['role'] == 'admin':
         df_claim, df_done = get_daily_logs(q_date.isoformat())
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("#### 📥 领取统计")
+            st.markdown("#### 📥 领取榜")
             if not df_claim.empty: st.dataframe(df_claim, use_container_width=True)
-            else: st.info("无领取数据")
+            else: st.info("无数据")
         with c2:
-            st.markdown("#### ✅ 完成统计")
+            st.markdown("#### ✅ 实干榜")
             if not df_done.empty: st.dataframe(df_done, use_container_width=True)
-            else: st.info("无完成数据")
+            else: st.info("无数据")
 
-# --- 👥 TEAM ---
+# --- 👥 TEAM (增强版) ---
 elif selected_nav == "Team" and st.session_state['role'] == 'admin':
     st.markdown("### 👥 团队管理")
     users_raw = supabase.table('users').select("*").execute().data
@@ -411,12 +394,35 @@ elif selected_nav == "Team" and st.session_state['role'] == 'admin':
     with c_detail:
         if selected_username:
             user_info = df_users[df_users['username'] == selected_username].iloc[0]
+            
+            # 🔥 获取历史数据
+            tot_claimed, tot_done, df_history = get_user_historical_data(selected_username)
+            
             st.markdown(f"### 👤 {user_info['real_name']}")
             st.info(f"Role: {user_info['role']} | Last Seen: {str(user_info.get('last_seen', 'Never'))[:16]}")
             
+            # 统计数据卡片
+            k1, k2 = st.columns(2)
+            k1.metric("📦 历史总领取", tot_claimed)
+            k2.metric("✅ 历史总完成", tot_done)
+            
+            st.markdown("#### 📜 已处理客户列表 (Processed History)")
+            if not df_history.empty:
+                # 优化表格显示，包含链接
+                st.dataframe(
+                    df_history,
+                    column_config={
+                        "shop_link": st.column_config.LinkColumn("店铺链接"),
+                        "completed_at": st.column_config.DatetimeColumn("处理时间", format="D MMM YYYY, h:mm a")
+                    },
+                    use_container_width=True
+                )
+            else:
+                st.info("该员工暂无处理记录")
+
             st.markdown("---")
             with st.expander("🗑️ 删除账号并回收任务"):
-                st.error("删除后，该员工名下【未完成】的任务将自动重置回公共池。")
+                st.error("警告：删除后，该员工名下【未完成】的任务将自动重置回公共池。")
                 confirm_del = st.text_input(f"请输入 '{selected_username}' 确认删除")
                 if st.button("确认删除"):
                     if confirm_del == selected_username:
@@ -425,26 +431,15 @@ elif selected_nav == "Team" and st.session_state['role'] == 'admin':
 
 # --- 🏭 IMPORT (含报警机制) ---
 elif selected_nav == "Import" and st.session_state['role'] == 'admin':
-    
-    # 1. 实时查询库存
     pool_count = get_public_pool_count()
-    
-    # 2. 🔥 红色报警判断
     if pool_count < CONFIG["LOW_STOCK_THRESHOLD"]:
-        st.markdown(f"""
-        <div class="low-stock-alert">
-            🚨 库存告急！公共池仅剩 {pool_count} 个客户！<br>
-            请立即上传新数据补充弹药！
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""<div class="low-stock-alert">🚨 库存告急！公共池仅剩 {pool_count} 个客户！请补充！</div>""", unsafe_allow_html=True)
     else:
         st.metric("公共池剩余库存", f"{pool_count} 个", delta="库存充足", delta_color="normal")
     
-    # 3. ♻️ 每日归仓操作
-    with st.expander("♻️ 每日归仓工具 (Day-End Settlement)", expanded=True):
-        st.info("说明：一键回收所有“昨天或更早”分配但“未完成”的任务，让它们流回公共池。")
-        c_btn, c_res = st.columns([1, 3])
-        if c_btn.button("执行归仓回收"):
+    with st.expander("♻️ 每日归仓工具", expanded=True):
+        st.info("回收所有“昨天或更早”分配但“未完成”的任务。")
+        if st.button("执行归仓回收"):
             count = recycle_expired_tasks()
             if count > 0: st.success(f"成功回收 {count} 个滞留任务！")
             else: st.info("没有需要回收的任务。")
@@ -452,7 +447,6 @@ elif selected_nav == "Import" and st.session_state['role'] == 'admin':
     st.divider()
     st.markdown("### 📥 进货操作")
     col_up, col_log = st.columns([1, 1])
-    
     with col_up:
         up_file = st.file_uploader("上传 Excel/CSV", type=['xlsx', 'csv'])
         if up_file:
@@ -466,7 +460,6 @@ elif selected_nav == "Import" and st.session_state['role'] == 'admin':
 
     with col_log:
         st.markdown("#### ⚙️ 日志")
-        
     if up_file and start_btn:
         client = OpenAI(api_key=OPENAI_KEY)
         with st.status("处理中...", expanded=True) as status:
@@ -479,9 +472,7 @@ elif selected_nav == "Import" and st.session_state['role'] == 'admin':
                     raw_phones.add(p)
                     if p not in row_map: row_map[p] = []
                     row_map[p].append(i)
-            
-            status.write(f"提取到 {len(raw_phones)} 个号码，开始验证...")
-            
+            status.write(f"提取到 {len(raw_phones)} 个号码，验证中...")
             valid_phones = []
             phone_list = list(raw_phones)
             batch_size = 500
@@ -490,9 +481,7 @@ elif selected_nav == "Import" and st.session_state['role'] == 'admin':
                 res_map = process_checknumber_task(batch, CN_KEY, CN_USER)
                 valid_phones.extend([p for p in batch if res_map.get(p) == 'valid'])
                 time.sleep(1)
-            
-            status.write(f"验证完成，有效号码 {len(valid_phones)} 个，AI 生成中...")
-            
+            status.write(f"验证完成，有效 {len(valid_phones)} 个，AI 生成中...")
             final_rows = []
             bar = st.progress(0)
             for idx, p in enumerate(valid_phones):
@@ -500,13 +489,11 @@ elif selected_nav == "Import" and st.session_state['role'] == 'admin':
                 row = df_raw.iloc[rid]
                 msg = get_ai_message_sniper(client, row[s_col], row[l_col], "Sales Team")
                 final_rows.append({"Shop": row[s_col], "Link": row[l_col], "Phone": p, "Msg": msg})
-                
                 if len(final_rows) >= 100:
                     admin_bulk_upload_to_pool(final_rows)
                     final_rows = []
                 bar.progress((idx+1)/len(valid_phones))
-                
             if final_rows: admin_bulk_upload_to_pool(final_rows)
             status.update(label="完成入库！", state="complete")
             time.sleep(1)
-            st.rerun() # 刷新页面更新库存数字
+            st.rerun()
