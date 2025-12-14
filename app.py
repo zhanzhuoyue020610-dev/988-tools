@@ -9,6 +9,7 @@ import time
 import io
 import os
 import hashlib
+import random
 from datetime import date, datetime, timedelta
 
 try:
@@ -29,7 +30,6 @@ CONFIG = {
     "POINTS_PER_TASK": 10,
     "MAX_RETRIES": 3,
     "FALLBACK_SIGNATURE": "Super Admin (988 Group)",
-    # 🔥 修改：改用 mini 模型，兼容性更好，且更便宜
     "AI_MODEL": "gpt-4o-mini" 
 }
 
@@ -56,7 +56,9 @@ def login_user(u, p):
     try:
         res = supabase.table('users').select("*").eq('username', u).eq('password', pwd_hash).execute()
         if res.data:
-            supabase.table('users').update({'last_seen': datetime.now().isoformat()}).eq('username', u).execute()
+            # 管理员登录不更新 last_seen，保持隐身
+            if res.data[0]['role'] != 'admin':
+                supabase.table('users').update({'last_seen': datetime.now().isoformat()}).eq('username', u).execute()
             return res.data[0]
         return None
     except: return None
@@ -99,7 +101,7 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 调试版 AI 调用逻辑 ---
+# --- 🔥 AI 逻辑 ---
 
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
@@ -118,47 +120,25 @@ def get_daily_motivation(client):
     return st.session_state["motivation_quote"]
 
 def get_ai_message_sniper(client, shop, link, rep_name, debug_mode=False):
-    """
-    debug_mode=True 时，会返回真实的报错信息，而不是离线模版
-    """
     offline_template = f"您好! 我们关注到 {shop} 在 Ozon 的选品很有潜力。988 Group 专注中俄供应链，可协助源头采购与物流，期待与您交流。"
-    
     if not shop or str(shop).lower() in ['nan', 'none', '']: return "数据缺失"
-    
     prompt = f"Role: Supply Chain Sales '{rep_name}'. Target: {shop}. Link: {link}. Write short Russian WhatsApp intro offering sourcing services."
-    
     try:
         if not client: raise Exception("Client未初始化")
-        
-        res = client.chat.completions.create(
-            model=CONFIG["AI_MODEL"], # 使用兼容性更好的模型
-            messages=[{"role":"user","content":prompt}]
-        )
+        res = client.chat.completions.create(model=CONFIG["AI_MODEL"], messages=[{"role":"user","content":prompt}])
         return res.choices[0].message.content
-
     except AuthenticationError as e:
-        if debug_mode: return f"⚠️ 权限错误 (401): 请检查Key是否正确。{e}"
-        return offline_template
-    except NotFoundError as e:
-        if debug_mode: return f"⚠️ 模型错误 (404): 你的账号无法使用 {CONFIG['AI_MODEL']} 模型，请尝试更换 Key 或充值。{e}"
-        return offline_template
-    except RateLimitError as e:
-        if debug_mode: return f"⚠️ 限流错误 (429): 请求太快或余额不足 (即使显示有余额也可能欠费)。{e}"
+        if debug_mode: return f"⚠️ 权限错误 (401): 请检查Key。{e}"
         return offline_template
     except Exception as e:
-        if debug_mode: return f"⚠️ 未知错误: {str(e)}"
+        if debug_mode: return f"⚠️ 错误: {str(e)}"
         return offline_template
 
 def auto_heal_task(task_id, shop, link, current_retries, client):
     if current_retries >= CONFIG["MAX_RETRIES"]: return False, None, "MAX_RETRIES_EXCEEDED"
-    
-    # 自动自愈时不开启 debug 模式，防止报错暴露给业务员
     new_msg = get_ai_message_sniper(client, shop, link, "Sales", debug_mode=False)
-    
-    if not new_msg or CONFIG["FALLBACK_SIGNATURE"] in new_msg:
-        return False, new_msg, "GENERATION_FAILED"
-    else:
-        return True, new_msg, None
+    if not new_msg or CONFIG["FALLBACK_SIGNATURE"] in new_msg: return False, new_msg, "GENERATION_FAILED"
+    else: return True, new_msg, None
 
 def scan_and_heal_leads(leads_list, client):
     if not leads_list: return []
@@ -171,8 +151,6 @@ def scan_and_heal_leads(leads_list, client):
                 lead['ai_message'] = new_msg
                 healed_leads.append(lead)
             else:
-                # 即使修复失败，也不要让业务员看到报错代码，显示原来的（虽然是保底文案，但至少是人话）
-                # 后台记录错误
                 new_count = lead.get('retry_count', 0) + 1
                 is_frozen = True if new_count >= CONFIG["MAX_RETRIES"] else False
                 supabase.table('leads').update({'retry_count': new_count, 'is_frozen': is_frozen, 'error_log': err_code}).eq('id', lead['id']).execute()
@@ -286,6 +264,7 @@ def get_daily_logs(query_date):
     raw_claims = supabase.table('leads').select('assigned_to, assigned_at').eq('assigned_at', query_date).execute().data
     df_claims = pd.DataFrame(raw_claims)
     if not df_claims.empty:
+        # 🔥 过滤 Admin 日志
         df_claims = df_claims[df_claims['assigned_to'] != 'admin'] 
         df_claim_summary = df_claims.groupby('assigned_to').size().reset_index(name='领取数量')
     else: df_claim_summary = pd.DataFrame(columns=['assigned_to', '领取数量'])
@@ -294,6 +273,7 @@ def get_daily_logs(query_date):
     raw_done = supabase.table('leads').select('assigned_to, completed_at').gte('completed_at', start_dt).lte('completed_at', end_dt).execute().data
     df_done = pd.DataFrame(raw_done)
     if not df_done.empty:
+        # 🔥 过滤 Admin 日志
         df_done = df_done[df_done['assigned_to'] != 'admin']
         df_done_summary = df_done.groupby('assigned_to').size().reset_index(name='实际处理')
     else: df_done_summary = pd.DataFrame(columns=['assigned_to', '实际处理'])
@@ -351,14 +331,14 @@ def check_api_health(cn_user, cn_key, openai_key):
         headers = {"X-API-Key": cn_key}
         test_url = f"{CONFIG['CN_BASE_URL']}" 
         resp = requests.get(test_url, headers=headers, params={'user_id': cn_user}, timeout=5, verify=False)
-        if resp.status_code in [200, 400, 404]: status["checknumber"] = True
+        # 🔥 核心修复：接受 405 (Method Not Allowed) 为正常连接，因为这证明服务器收到了请求
+        if resp.status_code in [200, 400, 404, 405]: status["checknumber"] = True
         else: status["msg"].append(f"CheckNumber: {resp.status_code}")
     except Exception as e: status["msg"].append(f"CheckNumber: {str(e)}")
     try:
         if not openai_key or "sk-" not in openai_key: status["msg"].append("OpenAI: 格式错误")
         else:
             client = OpenAI(api_key=openai_key)
-            # 使用配置的模型进行一次最轻量的测试
             client.chat.completions.create(
                 model=CONFIG["AI_MODEL"], 
                 messages=[{"role":"user","content":"Hi"}],
@@ -369,7 +349,7 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 GEMINI DARK - PURE LUXURY
+# 🎨 UI 主题
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="⚫")
 
