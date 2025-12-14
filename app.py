@@ -26,7 +26,8 @@ warnings.filterwarnings("ignore")
 # ==========================================
 CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
-    "DAILY_QUOTA": 25  # 每天限领额度
+    "DAILY_QUOTA": 25,  # 每天限领额度
+    "LOW_STOCK_THRESHOLD": 300 # 🔥 库存报警阈值
 }
 
 # ==========================================
@@ -65,24 +66,51 @@ def create_user(u, p, n, role="sales"):
         return True
     except: return False
 
-# --- 🔥 删除用户并回收线索 ---
+# --- 🔥 新增：库存查询与回收逻辑 ---
+def get_public_pool_count():
+    """获取公共池剩余数量"""
+    if not supabase: return 0
+    try:
+        # count='exact' 用于获取精确数量
+        res = supabase.table('leads').select('id', count='exact').is_('assigned_to', 'null').execute()
+        return res.count
+    except: return 0
+
+def recycle_expired_tasks():
+    """
+    ♻️ 每日归仓逻辑：
+    将所有分配时间早于今天 (assigned_at < today)，且未完成 (is_contacted = False) 的任务，
+    强制重置回公共池。
+    """
+    if not supabase: return 0
+    today_str = date.today().isoformat()
+    try:
+        # 1. 查找过期未完成任务
+        # lt = less than (小于今天)
+        res = supabase.table('leads').update({
+            'assigned_to': None,
+            'assigned_at': None
+        }).lt('assigned_at', today_str).eq('is_contacted', False).execute()
+        
+        # Supabase update 返回的 data 是被更新的行列表
+        return len(res.data)
+    except Exception as e:
+        print(e)
+        return 0
+
 def delete_user_and_recycle(username):
     """删除业务员，并将其未完成的任务全部踢回公共池"""
     if not supabase: return False
     try:
-        # 1. 查找该用户所有【未完成】的任务，重置为未分配状态
         supabase.table('leads').update({
             'assigned_to': None,
             'assigned_at': None,
             'is_contacted': False
         }).eq('assigned_to', username).eq('is_contacted', False).execute()
         
-        # 2. 删除用户
         supabase.table('users').delete().eq('username', username).execute()
         return True
-    except Exception as e:
-        print(f"Delete Error: {e}")
-        return False
+    except: return False
 
 def admin_bulk_upload_to_pool(leads_data):
     if not supabase or not leads_data: return False
@@ -105,69 +133,55 @@ def admin_bulk_upload_to_pool(leads_data):
         return True
     except: return False
 
-# --- 🔥 主动领取逻辑 ---
+# --- 主动领取逻辑 ---
 def claim_daily_tasks(username):
-    """业务员主动点击按钮领取任务"""
     today_str = date.today().isoformat()
-    
-    # 1. 先看今天领没领够
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
     
-    if current_count >= CONFIG["DAILY_QUOTA"]:
-        return existing, "full" # 已经满了
+    if current_count >= CONFIG["DAILY_QUOTA"]: return existing, "full"
     
     needed = CONFIG["DAILY_QUOTA"] - current_count
-    
-    # 2. 没满，去公池抢
     pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').limit(needed).execute().data
     
     if pool_leads:
         ids_to_update = [x['id'] for x in pool_leads]
         supabase.table('leads').update({'assigned_to': username, 'assigned_at': today_str}).in_('id', ids_to_update).execute()
-        # 再次拉取最新的
         existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
         return existing, "claimed"
     else:
-        return existing, "empty" # 公池没货了
+        return existing, "empty"
 
 def get_todays_leads(username):
-    """仅查看，不领取"""
     today_str = date.today().isoformat()
     return supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
 
-# --- 🔥 防作弊完成逻辑 ---
+# --- 防作弊完成逻辑 ---
 def mark_lead_complete_secure(lead_id):
     if not supabase: return
     now_iso = datetime.now().isoformat()
     supabase.table('leads').update({
         'is_contacted': True,
-        'completed_at': now_iso # 记录完成的具体时间
+        'completed_at': now_iso
     }).eq('id', lead_id).execute()
 
-# --- 🔥 日志统计逻辑 ---
+# --- 日志逻辑 ---
 def get_daily_logs(query_date):
-    """获取指定日期的领取和完成日志"""
     if not supabase: return pd.DataFrame(), pd.DataFrame()
     
-    # 1. 领取榜
     raw_claims = supabase.table('leads').select('assigned_to, assigned_at').eq('assigned_at', query_date).execute().data
     df_claims = pd.DataFrame(raw_claims)
     if not df_claims.empty:
         df_claim_summary = df_claims.groupby('assigned_to').size().reset_index(name='领取数量')
-    else:
-        df_claim_summary = pd.DataFrame(columns=['assigned_to', '领取数量'])
+    else: df_claim_summary = pd.DataFrame(columns=['assigned_to', '领取数量'])
         
-    # 2. 处理榜 (completed_at 是带时间的)
     start_dt = f"{query_date}T00:00:00"
     end_dt = f"{query_date}T23:59:59"
-    
     raw_done = supabase.table('leads').select('assigned_to, completed_at').gte('completed_at', start_dt).lte('completed_at', end_dt).execute().data
     df_done = pd.DataFrame(raw_done)
     if not df_done.empty:
         df_done_summary = df_done.groupby('assigned_to').size().reset_index(name='实际处理')
-    else:
-        df_done_summary = pd.DataFrame(columns=['assigned_to', '实际处理'])
+    else: df_done_summary = pd.DataFrame(columns=['assigned_to', '实际处理'])
         
     return df_claim_summary, df_done_summary
 
@@ -232,26 +246,37 @@ st.markdown("""
     /* 进度条 */
     .stProgress > div > div > div > div { background-color: #4CAF50 !important; }
     
+    /* 警告条动画 */
+    @keyframes pulse {
+        0% { background-color: #ff4b4b; }
+        50% { background-color: #ff0000; }
+        100% { background-color: #ff4b4b; }
+    }
+    .low-stock-alert {
+        padding: 15px;
+        color: white;
+        font-weight: bold;
+        text-align: center;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        animation: pulse 2s infinite;
+        border: 2px solid #ffcccc;
+    }
+    
     /* 卡片与容器 */
     div[data-testid="stExpander"], div[data-testid="stForm"], div[data-testid="stDataFrame"] {
         background-color: #1e1e1e !important; border: 1px solid #333 !important; border-radius: 6px;
     }
     
-    /* 按钮 */
     button { color: white !important; }
     div.stButton > button {
         background-color: #0078d4 !important; border: 1px solid #0078d4 !important;
         width: 100%; font-weight: bold;
     }
-    
-    /* 禁用状态的按钮 */
     button:disabled {
-        background-color: #555 !important;
-        border-color: #555 !important;
-        color: #aaa !important;
+        background-color: #555 !important; border-color: #555 !important; color: #aaa !important;
         cursor: not-allowed;
     }
-
     h1, h2, h3 { color: #fff !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -289,7 +314,6 @@ except: CN_USER=""; CN_KEY=""; OPENAI_KEY=""
 st.markdown(f"**👤 {st.session_state['real_name']}** | Role: {st.session_state['role'].upper()}")
 if st.button("Logout", key="logout_top"): st.session_state.clear(); st.rerun()
 
-# 顶部导航
 menu_options = ["Workbench"]
 if st.session_state['role'] == 'admin':
     menu_options = ["Workbench", "Logs", "Team", "Import"]
@@ -297,51 +321,38 @@ if st.session_state['role'] == 'admin':
 selected_nav = st.radio("Nav", menu_options, horizontal=True, label_visibility="collapsed")
 st.divider()
 
-# --- 💼 WORKBENCH (主动领取 + 防作弊) ---
+# --- 💼 WORKBENCH ---
 if selected_nav == "Workbench":
     st.markdown("### 🎯 今日任务看板")
-    
-    # 1. 查询今日已持有任务
     my_leads = get_todays_leads(st.session_state['username'])
     total_task = CONFIG["DAILY_QUOTA"]
     current_count = len(my_leads)
     
-    # 2. 状态提示 & 领取按钮
     if current_count < total_task:
         st.warning(f"⚠️ 你的任务未满！今日指标 {total_task} 个，当前持有 {current_count} 个。")
         if st.button(f"📥 立即领取剩余 {total_task - current_count} 个任务"):
             my_leads, status = claim_daily_tasks(st.session_state['username'])
             if status == "empty": st.error("公池已被领空，请联系管理员补货！")
             elif status == "full": st.success("任务已领满！")
-            else: st.success("领取成功！开始工作吧！")
-            st.rerun()
-    else:
-        st.success("✅ 今日任务已领满，请尽快处理。")
+            else: st.success("领取成功！"); st.rerun()
+    else: st.success("✅ 今日任务已领满。")
 
-    # 3. 进度条
     completed_count = sum([1 for x in my_leads if x.get('is_contacted')])
     st.progress(min(completed_count / total_task, 1.0))
     st.caption(f"进度: {completed_count} / {total_task}")
     
     tab_todo, tab_done = st.tabs(["🔥 待跟进", "✅ 已完成"])
-    
     with tab_todo:
         to_do_items = [x for x in my_leads if not x.get('is_contacted')]
         if not to_do_items:
-            if current_count == 0: st.info("请先点击上方按钮领取任务。")
+            if current_count == 0: st.info("请先领取任务。")
             else: st.success("🎉 待办清空！")
-            
         for item in to_do_items:
             with st.expander(f"🏢 {item['shop_name']} (+{item['phone']})", expanded=True):
                 st.info(item['ai_message'])
-                
                 c1, c2 = st.columns(2)
-                
-                # --- 防作弊逻辑核心 ---
                 link_key = f"clicked_{item['id']}"
                 if link_key not in st.session_state: st.session_state[link_key] = False
-                
-                wa_url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
                 
                 if not st.session_state[link_key]:
                     if c1.button("🔗 获取 WhatsApp 链接", key=f"lk_{item['id']}"):
@@ -349,13 +360,12 @@ if selected_nav == "Workbench":
                         st.rerun()
                     c2.button("🚫 请先获取链接", disabled=True, key=f"fake_{item['id']}")
                 else:
+                    wa_url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
                     c1.markdown(f"<a href='{wa_url}' target='_blank' style='display:block;text-align:center;background:#25D366;color:white;padding:10px;border-radius:4px;text-decoration:none;font-weight:bold;'>👉 点击跳转 WhatsApp</a>", unsafe_allow_html=True)
-                    
                     if c2.button("✅ 标记完成", key=f"done_{item['id']}"):
                         mark_lead_complete_secure(item['id'])
                         st.session_state.pop(link_key, None)
                         st.rerun()
-
     with tab_done:
         done_items = [x for x in my_leads if x.get('is_contacted')]
         if done_items:
@@ -363,45 +373,34 @@ if selected_nav == "Workbench":
             df_done['completed_at'] = pd.to_datetime(df_done['completed_at']).dt.strftime('%H:%M')
             st.dataframe(df_done[['shop_name', 'phone', 'completed_at']], use_container_width=True)
 
-# --- 📅 LOGS (管理员 - 日志监控) ---
+# --- 📅 LOGS ---
 elif selected_nav == "Logs" and st.session_state['role'] == 'admin':
-    st.markdown("### 📅 每日监控日志")
-    st.caption("独立于档案管理，监控每日团队的【领取量】和【实际工作量】。")
-    
+    st.markdown("### 📅 每日监控")
     q_date = st.date_input("选择查询日期", date.today())
-    
     if q_date:
         df_claim, df_done = get_daily_logs(q_date.isoformat())
-        
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("#### 📥 今日领取榜")
-            if not df_claim.empty:
-                st.dataframe(df_claim, use_container_width=True)
-            else: st.info("今日无人领取")
-            
+            st.markdown("#### 📥 领取统计")
+            if not df_claim.empty: st.dataframe(df_claim, use_container_width=True)
+            else: st.info("无领取数据")
         with c2:
-            st.markdown("#### ✅ 今日实干榜")
-            if not df_done.empty:
-                st.dataframe(df_done, use_container_width=True)
-            else: st.info("今日无人完成任务")
+            st.markdown("#### ✅ 完成统计")
+            if not df_done.empty: st.dataframe(df_done, use_container_width=True)
+            else: st.info("无完成数据")
 
-# --- 👥 TEAM (管理员 - 删除与回收) ---
+# --- 👥 TEAM ---
 elif selected_nav == "Team" and st.session_state['role'] == 'admin':
     st.markdown("### 👥 团队管理")
-    
     users_raw = supabase.table('users').select("*").execute().data
     df_users = pd.DataFrame(users_raw)
     
     c_list, c_detail = st.columns([1, 2])
-    
     with c_list:
-        st.markdown("#### 员工列表")
         selected_username = st.radio("选择员工", df_users['username'].tolist())
-        
         st.divider()
-        st.markdown("#### 新增员工")
         with st.form("add_user"):
+            st.write("新增员工")
             new_u = st.text_input("用户名")
             new_p = st.text_input("密码", type="password")
             new_n = st.text_input("真实姓名")
@@ -416,26 +415,42 @@ elif selected_nav == "Team" and st.session_state['role'] == 'admin':
             st.info(f"Role: {user_info['role']} | Last Seen: {str(user_info.get('last_seen', 'Never'))[:16]}")
             
             st.markdown("---")
-            st.markdown("#### 🚨 危险操作区")
-            with st.expander("🗑️ 删除账号并回收任务", expanded=False):
-                st.error("警告：此操作不可逆！删除后，该员工名下【未完成】的任务将自动重置回公共池，供其他员工领取。")
+            with st.expander("🗑️ 删除账号并回收任务"):
+                st.error("删除后，该员工名下【未完成】的任务将自动重置回公共池。")
                 confirm_del = st.text_input(f"请输入 '{selected_username}' 确认删除")
-                
-                if st.button("确认删除用户"):
+                if st.button("确认删除"):
                     if confirm_del == selected_username:
                         if delete_user_and_recycle(selected_username):
-                            st.success(f"用户 {selected_username} 已删除，任务已回收！")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("删除失败，请检查数据库连接")
-                    else:
-                        st.warning("确认名称输入错误")
+                            st.success("删除成功，任务已回收！"); time.sleep(1); st.rerun()
 
-# --- 🏭 IMPORT (管理员 - 进货) ---
+# --- 🏭 IMPORT (含报警机制) ---
 elif selected_nav == "Import" and st.session_state['role'] == 'admin':
-    st.markdown("### 🏭 智能进货中心")
     
+    # 1. 实时查询库存
+    pool_count = get_public_pool_count()
+    
+    # 2. 🔥 红色报警判断
+    if pool_count < CONFIG["LOW_STOCK_THRESHOLD"]:
+        st.markdown(f"""
+        <div class="low-stock-alert">
+            🚨 库存告急！公共池仅剩 {pool_count} 个客户！<br>
+            请立即上传新数据补充弹药！
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.metric("公共池剩余库存", f"{pool_count} 个", delta="库存充足", delta_color="normal")
+    
+    # 3. ♻️ 每日归仓操作
+    with st.expander("♻️ 每日归仓工具 (Day-End Settlement)", expanded=True):
+        st.info("说明：一键回收所有“昨天或更早”分配但“未完成”的任务，让它们流回公共池。")
+        c_btn, c_res = st.columns([1, 3])
+        if c_btn.button("执行归仓回收"):
+            count = recycle_expired_tasks()
+            if count > 0: st.success(f"成功回收 {count} 个滞留任务！")
+            else: st.info("没有需要回收的任务。")
+    
+    st.divider()
+    st.markdown("### 📥 进货操作")
     col_up, col_log = st.columns([1, 1])
     
     with col_up:
@@ -444,11 +459,9 @@ elif selected_nav == "Import" and st.session_state['role'] == 'admin':
             if up_file.name.endswith('.csv'): df_raw = pd.read_csv(up_file)
             else: df_raw = pd.read_excel(up_file)
             st.write(f"读取到 {len(df_raw)} 行数据")
-            
             c1, c2 = st.columns(2)
             s_col = c1.selectbox("店铺名列", df_raw.columns, index=1 if len(df_raw.columns)>1 else 0)
             l_col = c2.selectbox("链接/URL列", df_raw.columns, index=0)
-            
             start_btn = st.button("🚀 启动处理")
 
     with col_log:
@@ -495,3 +508,5 @@ elif selected_nav == "Import" and st.session_state['role'] == 'admin':
                 
             if final_rows: admin_bulk_upload_to_pool(final_rows)
             status.update(label="完成入库！", state="complete")
+            time.sleep(1)
+            st.rerun() # 刷新页面更新库存数字
