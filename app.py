@@ -11,7 +11,7 @@ import os
 import hashlib
 import random
 from datetime import date, datetime, timedelta
-import concurrent.futures # 引入并发库
+import concurrent.futures
 
 try:
     from supabase import create_client, Client
@@ -100,7 +100,7 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 AI 生成逻辑 (带身份注入) ---
+# --- 🔥 AI 生成逻辑 ---
 
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
@@ -119,15 +119,12 @@ def get_daily_motivation(client):
     return st.session_state["motivation_quote"]
 
 def get_ai_message_sniper(client, shop, link, rep_name):
-    """
-    🔥 核心：rep_name 会传入业务员的真实姓名
-    """
     # 离线模版 (兜底)
     offline_template = f"Здравствуйте! Заметили ваш магазин {shop} на Ozon. {rep_name} из 988 Group на связи. Мы занимаемся поставками из Китая. Можем рассчитать логистику?"
     
     if not shop or str(shop).lower() in ['nan', 'none', '']: return "数据缺失"
     
-    # 🔥 Prompt 强制要求使用 rep_name
+    # 🔥 Prompt 强制使用传入的 rep_name (即 username)
     prompt = f"""
     Role: Supply Chain Manager '{rep_name}' at 988 Group.
     Target: Ozon Seller '{shop}' (Link: {link}).
@@ -147,17 +144,13 @@ def get_ai_message_sniper(client, shop, link, rep_name):
             messages=[{"role":"user","content":prompt}]
         )
         content = res.choices[0].message.content.strip()
-        
-        # 二次校验
         if "[" in content or "]" in content: return offline_template
         return content
-
     except:
         return offline_template
 
-# --- 🔥 并发生成逻辑 (加速领取过程) ---
+# --- 并发生成逻辑 ---
 def generate_and_update_task(lead, client, rep_name):
-    """单个任务生成并更新数据库"""
     try:
         msg = get_ai_message_sniper(client, lead['shop_name'], lead['shop_link'], rep_name)
         supabase.table('leads').update({'ai_message': msg}).eq('id', lead['id']).execute()
@@ -230,7 +223,7 @@ def admin_bulk_upload_to_pool(leads_data):
         for item in leads_data:
             rows.append({
                 "shop_name": item['Shop'], "shop_link": item['Link'], "phone": item['Phone'], 
-                "ai_message": None,  # 🔥 进货时留空，等待领取时生成
+                "ai_message": None, 
                 "is_valid": True, "assigned_to": None, "assigned_at": None, "is_contacted": False,
                 "retry_count": 0, "is_frozen": False, "error_log": None
             })
@@ -240,47 +233,45 @@ def admin_bulk_upload_to_pool(leads_data):
         return True
     except: return False
 
-def claim_daily_tasks(username, real_name, client):
+def claim_daily_tasks(username, client):
     """
-    🔥 核心修改：领取时触发并发 AI 生成
+    🔥 核心修改：使用 username 作为 AI 的 rep_name
     """
     today_str = date.today().isoformat()
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
     
     if current_count >= CONFIG["DAILY_QUOTA"]: return existing, "full"
-    
     needed = CONFIG["DAILY_QUOTA"] - current_count
-    
-    # 1. 锁定任务
     pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').eq('is_frozen', False).limit(needed).execute().data
     
     if pool_leads:
         ids_to_update = [x['id'] for x in pool_leads]
         supabase.table('leads').update({'assigned_to': username, 'assigned_at': today_str}).in_('id', ids_to_update).execute()
         
-        # 2. 获取刚才锁定的任务详情
         fresh_tasks = supabase.table('leads').select("*").in_('id', ids_to_update).execute().data
         
-        # 3. 🔥 并发调用 AI 生成文案 (传入真实姓名)
-        with st.status(f"正在为 {real_name} 生成专属文案...", expanded=True) as status:
+        # 🔥 这里传入 username，而不是 real_name
+        with st.status(f"正在为 {username} 生成专属文案...", expanded=True) as status:
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                futures = [executor.submit(generate_and_update_task, task, client, real_name) for task in fresh_tasks]
-                
-                completed = 0
-                for future in concurrent.futures.as_completed(futures):
-                    completed += 1
-                    # 可以在这里更新进度条，但为了速度略过
+                futures = [executor.submit(generate_and_update_task, task, client, username) for task in fresh_tasks]
+                concurrent.futures.wait(futures)
             status.update(label="文案生成完毕！", state="complete")
         
-        # 4. 重新拉取最终列表
         final_list = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
         return final_list, "claimed"
     else: return existing, "empty"
 
-def get_todays_leads(username):
+def get_todays_leads(username, client):
     today_str = date.today().isoformat()
-    return supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
+    leads = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
+    # 检查是否有未生成的文案（null），如果有，修补一下 (使用 username)
+    to_heal = [l for l in leads if not l['ai_message']]
+    if to_heal:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            [executor.submit(generate_and_update_task, t, client, username) for t in to_heal]
+        leads = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
+    return leads
 
 def mark_lead_complete_secure(lead_id, username):
     if not supabase: return
@@ -522,32 +513,40 @@ st.markdown("<br>", unsafe_allow_html=True)
 # --- 🖥️ SYSTEM MONITOR (Admin) ---
 if selected_nav == "System" and st.session_state['role'] == 'admin':
     
-    with st.expander("🔑 API Key 调试器", expanded=False):
-        st.write("如报错，请在 Streamlit 后台 Secrets 更新 Key 并重启。")
-        st.code(f"AI Model: {CONFIG['AI_MODEL']}", language="text")
-        st.code(f"OpenAI Key (Last 5): {OPENAI_KEY[-5:] if OPENAI_KEY else 'N/A'}", language="text")
+    with st.expander("🔑 API Key 调试器 (仅管理员可见)", expanded=False):
+        st.write("如果下方显示错误，请去 Streamlit 后台 Secrets 更新 Key，并点击 Manage app -> Reboot 重启应用。")
+        st.code(f"当前使用的模型: {CONFIG['AI_MODEL']}", language="text")
+        st.code(f"当前 Key 后 5 位: {OPENAI_KEY[-5:] if OPENAI_KEY else '未读取到'}", language="text")
         
     frozen_count, frozen_leads = get_frozen_leads_count()
     if frozen_count > 0:
-        st.markdown(f"""<div class="error-alert-box">🚨 <b>{frozen_count} 个任务被冻结</b><br>建议：1. 检查API; 2. 查看下方日志。</div>""", unsafe_allow_html=True)
-        with st.expander(f"查看详情", expanded=True):
+        st.markdown(f"""
+        <div class="error-alert-box">
+            🚨 <b>系统警报：有 {frozen_count} 个任务因连续重试 3 次失败而被冻结！</b><br>
+            建议操作：1. 检查 API 状态；2. 查看下方具体错误日志。
+        </div>
+        """, unsafe_allow_html=True)
+        with st.expander(f"查看冻结任务详情", expanded=True):
             st.dataframe(pd.DataFrame(frozen_leads))
-            if st.button("清除冻结任务"):
+            if st.button("清除所有冻结任务"):
                 supabase.table('leads').delete().eq('is_frozen', True).execute()
                 st.success("已清除"); time.sleep(1); st.rerun()
 
     st.markdown("#### 系统健康状态")
     health = check_api_health(CN_USER, CN_KEY, OPENAI_KEY)
+    
     k1, k2, k3 = st.columns(3)
     def status_pill(title, is_active, detail):
         dot = "dot-green" if is_active else "dot-red"
         text = "运行正常" if is_active else "连接异常"
         st.markdown(f"""<div style="background-color:#1e1f20; padding:20px; border-radius:16px;"><div style="font-size:14px; color:#c4c7c5;">{title}</div><div style="margin-top:10px; font-size:16px; color:white; font-weight:500;"><span class="status-dot {dot}"></span>{text}</div><div style="font-size:12px; color:#8e8e8e; margin-top:5px;">{detail}</div></div>""", unsafe_allow_html=True)
 
-    with k1: status_pill("云数据库", health['supabase'], "Supabase")
-    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber")
+    with k1: status_pill("云数据库", health['supabase'], "Supabase PostgreSQL")
+    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber API")
     with k3: status_pill("AI 引擎", health['openai'], f"OpenAI ({CONFIG['AI_MODEL']})")
-    if health['msg']: st.error(f"诊断报告: {'; '.join(health['msg'])}")
+    
+    if health['msg']:
+        st.error(f"诊断报告: {'; '.join(health['msg'])}")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("#### 沙盒模拟测试")
@@ -563,14 +562,14 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
                 s.write(f"提取结果: {nums}"); res = process_checknumber_task(nums, CN_KEY, CN_USER)
                 valid = [p for p in nums if res.get(p)=='valid']; s.write(f"有效号码: {valid}")
                 if valid:
-                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员", debug_mode=True)
+                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员")
                     s.write(f"生成结果: {msg}")
                 s.update(label="模拟完成", state="complete")
         except Exception as e: st.error(str(e))
 
 # --- 💼 WORKBENCH (Sales) ---
 elif selected_nav == "Workbench":
-    my_leads = get_todays_leads(st.session_state['username'])
+    my_leads = get_todays_leads(st.session_state['username'], client)
     total, curr = CONFIG["DAILY_QUOTA"], len(my_leads)
     c_stat, c_action = st.columns([2, 1])
     with c_stat:
@@ -581,7 +580,7 @@ elif selected_nav == "Workbench":
         st.markdown("<br>", unsafe_allow_html=True)
         if curr < total:
             if st.button(f"领取任务 (剩余 {total-curr} 个)"):
-                _, status = claim_daily_tasks(st.session_state['username'], st.session_state['real_name'], client)
+                _, status = claim_daily_tasks(st.session_state['username'], client)
                 if status=="empty": st.error("公池已空，请联系管理员")
                 else: st.rerun()
         else: st.success("今日已领满")
@@ -593,9 +592,9 @@ elif selected_nav == "Workbench":
         if not todos: st.caption("没有待办任务")
         for item in todos:
             with st.expander(f"{item['shop_name']}", expanded=True):
-                # 检查文案是否存在，如果还没生成（并发延迟），则显示加载中
+                # 如果文案还没生成（并发延迟），显示加载中
                 if not item['ai_message']:
-                    st.warning("⚠️ 文案正在生成中，请稍后刷新页面...")
+                    st.warning("⚠️ 文案生成中，请稍后刷新...")
                 else:
                     st.write(item['ai_message'])
                     c1, c2 = st.columns(2)
@@ -710,12 +709,11 @@ elif selected_nav == "Import":
                     batch = plist[i:i+500]; res = process_checknumber_task(batch, CN_KEY, CN_USER)
                     valid.extend([p for p in batch if res.get(p)=='valid']); time.sleep(1)
                 
-                # 🔥 进货时只存号码和状态，不生成文案
+                # 🔥 进货时 Msg 设为 None，等待领取时生成
                 s.write(f"有效号码 {len(valid)} 个，正在存入公池...")
                 rows = []
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
-                    # Msg 设为 None
                     rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":None, "retry_count": 0, "is_frozen": False, "error_log": None})
                     if len(rows)>=100: admin_bulk_upload_to_pool(rows); rows=[]
                 if rows: admin_bulk_upload_to_pool(rows)
