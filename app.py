@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import urllib.parse
-from openai import OpenAI, AuthenticationError, APIConnectionError, RateLimitError, NotFoundError
+from openai import OpenAI, AuthenticationError, APIConnectionError
 import requests
 import warnings
 import time
@@ -11,6 +11,7 @@ import os
 import hashlib
 import random
 from datetime import date, datetime, timedelta
+import concurrent.futures # 引入并发库
 
 try:
     from supabase import create_client, Client
@@ -29,8 +30,7 @@ CONFIG = {
     "LOW_STOCK_THRESHOLD": 300,
     "POINTS_PER_TASK": 10,
     "MAX_RETRIES": 3,
-    "FALLBACK_SIGNATURE": "Super Admin (988 Group)",
-    "AI_MODEL": "gpt-4o-mini" 
+    "AI_MODEL": "gpt-4o-mini"
 }
 
 # ==========================================
@@ -100,7 +100,7 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 强化版 AI 逻辑 ---
+# --- 🔥 AI 生成逻辑 (带身份注入) ---
 
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
@@ -118,121 +118,52 @@ def get_daily_motivation(client):
             st.session_state["motivation_quote"] = random.choice(local_quotes)
     return st.session_state["motivation_quote"]
 
-def get_ai_message_sniper(client, shop, link, rep_name, debug_mode=False):
+def get_ai_message_sniper(client, shop, link, rep_name):
     """
-    🔥 升级版 Prompt：严禁使用占位符
+    🔥 核心：rep_name 会传入业务员的真实姓名
     """
-    # 离线模版 (纯文本，无风险)
-    offline_template = f"Здравствуйте! Заметили ваш магазин {shop} на Ozon. 988 Group занимается поставками из Китая (логистика + выкуп). Можем рассчитать стоимость доставки для вас?"
+    # 离线模版 (兜底)
+    offline_template = f"Здравствуйте! Заметили ваш магазин {shop} на Ozon. {rep_name} из 988 Group на связи. Мы занимаемся поставками из Китая. Можем рассчитать логистику?"
     
-    if not shop or str(shop).lower() in ['nan', 'none', '']: return "Error: Data Missing"
+    if not shop or str(shop).lower() in ['nan', 'none', '']: return "数据缺失"
     
-    # 🔥 核心修改：加强 Prompt 约束
+    # 🔥 Prompt 强制要求使用 rep_name
     prompt = f"""
-    Role: Expert Supply Chain Manager '{rep_name}' at 988 Group.
+    Role: Supply Chain Manager '{rep_name}' at 988 Group.
     Target: Ozon Seller '{shop}' (Link: {link}).
-    Task: Write a short, professional, Russian WhatsApp intro message.
+    Task: Write a Russian WhatsApp intro (under 50 words).
     
-    CRITICAL RULES:
-    1. NO placeholders like [Your Name], [Insert Date].
-    2. Sign off clearly as '{rep_name} (988 Group)'.
-    3. Do not ask for contact info, just ask if they want a price calculation.
-    4. Keep it under 50 words.
-    5. Mention we offer "China sourcing + Logistics to Moscow".
+    RULES:
+    1. Introduce yourself exactly as: "{rep_name} (988 Group)".
+    2. NO placeholders like [Name].
+    3. Mention sourcing + logistics benefits.
+    4. Ask if they want a calculation.
     """
     
     try:
-        if not client: raise Exception("Client未初始化")
-        
+        if not client: return offline_template
         res = client.chat.completions.create(
             model=CONFIG["AI_MODEL"],
             messages=[{"role":"user","content":prompt}]
         )
         content = res.choices[0].message.content.strip()
         
-        # 🔥 二次校验：如果 AI 还是输出了占位符，直接丢弃，使用离线模版
-        if "[" in content or "]" in content:
-            if debug_mode: return f"AI 生成了非法占位符: {content}"
-            return offline_template
-            
+        # 二次校验
+        if "[" in content or "]" in content: return offline_template
         return content
 
-    except AuthenticationError as e:
-        if debug_mode: return f"⚠️ 权限错误 (401): 请检查Key。{e}"
-        return offline_template
-    except Exception as e:
-        if debug_mode: return f"⚠️ 错误: {str(e)}"
+    except:
         return offline_template
 
-def auto_heal_task(task_id, shop, link, current_retries, client):
-    if current_retries >= CONFIG["MAX_RETRIES"]: return False, None, "MAX_RETRIES_EXCEEDED"
-    
-    new_msg = get_ai_message_sniper(client, shop, link, "Sales", debug_mode=False)
-    
-    # 失败判定标准：空、报错代码、或者包含占位符
-    if not new_msg or "Error:" in new_msg or "[" in new_msg:
-        return False, new_msg, "GENERATION_FAILED"
-    else:
-        return True, new_msg, None
-
-def scan_and_heal_leads(leads_list, client):
-    if not leads_list: return []
-    healed_leads = []
-    for lead in leads_list:
-        msg = lead['ai_message']
-        # 🔥 扫描脏数据特征：包含 'Error code', '401', 或者占位符 '['
-        is_dirty = ("Error" in msg) or ("401" in msg) or ("[" in msg and "]" in msg)
-        
-        if is_dirty:
-            success, new_msg, err_code = auto_heal_task(lead['id'], lead['shop_name'], lead['shop_link'], lead.get('retry_count', 0), client)
-            if success:
-                supabase.table('leads').update({'ai_message': new_msg, 'retry_count': lead.get('retry_count', 0)+1, 'error_log': 'Fixed'}).eq('id', lead['id']).execute()
-                lead['ai_message'] = new_msg
-                healed_leads.append(lead)
-            else:
-                # 修复失败，保留原样但标记错误
-                healed_leads.append(lead)
-        else:
-            healed_leads.append(lead)
-    return healed_leads
-
-# --- 🔥 新增：管理员一键清洗脏数据 ---
-def admin_clean_dirty_data(client):
-    """
-    暴力扫描全库，重写所有报错的文案
-    """
-    if not supabase: return 0
+# --- 🔥 并发生成逻辑 (加速领取过程) ---
+def generate_and_update_task(lead, client, rep_name):
+    """单个任务生成并更新数据库"""
     try:
-        # 1. 查找所有含有 "Error" 或 "401" 或 "[" 的记录
-        # Supabase 的 ilike 语法：列名.ilike.%关键词%
-        # 由于 OR 查询比较麻烦，我们分三次查，简单粗暴
-        
-        # 查找报错的
-        res1 = supabase.table('leads').select("*").ilike('ai_message', '%Error%').eq('is_contacted', False).execute()
-        # 查找带占位符的
-        res2 = supabase.table('leads').select("*").ilike('ai_message', '%[%').eq('is_contacted', False).execute()
-        
-        dirty_leads = res1.data + res2.data
-        # 去重
-        seen = set()
-        unique_dirty = []
-        for d in dirty_leads:
-            if d['id'] not in seen:
-                unique_dirty.append(d)
-                seen.add(d['id'])
-        
-        count = 0
-        for lead in unique_dirty:
-            # 强制重写
-            new_msg = get_ai_message_sniper(client, lead['shop_name'], lead['shop_link'], "Sales", debug_mode=False)
-            if "Error" not in new_msg and "[" not in new_msg:
-                supabase.table('leads').update({'ai_message': new_msg}).eq('id', lead['id']).execute()
-                count += 1
-                
-        return count
-    except Exception as e:
-        print(e)
-        return 0
+        msg = get_ai_message_sniper(client, lead['shop_name'], lead['shop_link'], rep_name)
+        supabase.table('leads').update({'ai_message': msg}).eq('id', lead['id']).execute()
+        return True
+    except:
+        return False
 
 # --- 数据查询 ---
 def get_user_daily_performance(username):
@@ -280,14 +211,14 @@ def recycle_expired_tasks():
     if not supabase: return 0
     today_str = date.today().isoformat()
     try:
-        res = supabase.table('leads').update({'assigned_to': None, 'assigned_at': None}).lt('assigned_at', today_str).eq('is_contacted', False).execute()
+        res = supabase.table('leads').update({'assigned_to': None, 'assigned_at': None, 'ai_message': None}).lt('assigned_at', today_str).eq('is_contacted', False).execute()
         return len(res.data)
     except: return 0
 
 def delete_user_and_recycle(username):
     if not supabase: return False
     try:
-        supabase.table('leads').update({'assigned_to': None, 'assigned_at': None, 'is_contacted': False}).eq('assigned_to', username).eq('is_contacted', False).execute()
+        supabase.table('leads').update({'assigned_to': None, 'assigned_at': None, 'is_contacted': False, 'ai_message': None}).eq('assigned_to', username).eq('is_contacted', False).execute()
         supabase.table('users').delete().eq('username', username).execute()
         return True
     except: return False
@@ -298,7 +229,8 @@ def admin_bulk_upload_to_pool(leads_data):
         rows = []
         for item in leads_data:
             rows.append({
-                "shop_name": item['Shop'], "shop_link": item['Link'], "phone": item['Phone'], "ai_message": item['Msg'], 
+                "shop_name": item['Shop'], "shop_link": item['Link'], "phone": item['Phone'], 
+                "ai_message": None,  # 🔥 进货时留空，等待领取时生成
                 "is_valid": True, "assigned_to": None, "assigned_at": None, "is_contacted": False,
                 "retry_count": 0, "is_frozen": False, "error_log": None
             })
@@ -308,30 +240,47 @@ def admin_bulk_upload_to_pool(leads_data):
         return True
     except: return False
 
-def claim_daily_tasks(username, client):
+def claim_daily_tasks(username, real_name, client):
+    """
+    🔥 核心修改：领取时触发并发 AI 生成
+    """
     today_str = date.today().isoformat()
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
     
-    # 领取前先自检手头的任务
-    existing = scan_and_heal_leads(existing, client)
-    
     if current_count >= CONFIG["DAILY_QUOTA"]: return existing, "full"
+    
     needed = CONFIG["DAILY_QUOTA"] - current_count
+    
+    # 1. 锁定任务
     pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').eq('is_frozen', False).limit(needed).execute().data
+    
     if pool_leads:
         ids_to_update = [x['id'] for x in pool_leads]
         supabase.table('leads').update({'assigned_to': username, 'assigned_at': today_str}).in_('id', ids_to_update).execute()
+        
+        # 2. 获取刚才锁定的任务详情
+        fresh_tasks = supabase.table('leads').select("*").in_('id', ids_to_update).execute().data
+        
+        # 3. 🔥 并发调用 AI 生成文案 (传入真实姓名)
+        with st.status(f"正在为 {real_name} 生成专属文案...", expanded=True) as status:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                futures = [executor.submit(generate_and_update_task, task, client, real_name) for task in fresh_tasks]
+                
+                completed = 0
+                for future in concurrent.futures.as_completed(futures):
+                    completed += 1
+                    # 可以在这里更新进度条，但为了速度略过
+            status.update(label="文案生成完毕！", state="complete")
+        
+        # 4. 重新拉取最终列表
         final_list = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
-        # 领取的新任务也自检一遍
-        final_list = scan_and_heal_leads(final_list, client)
         return final_list, "claimed"
     else: return existing, "empty"
 
-def get_todays_leads(username, client):
+def get_todays_leads(username):
     today_str = date.today().isoformat()
-    leads = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
-    return scan_and_heal_leads(leads, client)
+    return supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
 
 def mark_lead_complete_secure(lead_id, username):
     if not supabase: return
@@ -573,48 +522,32 @@ st.markdown("<br>", unsafe_allow_html=True)
 # --- 🖥️ SYSTEM MONITOR (Admin) ---
 if selected_nav == "System" and st.session_state['role'] == 'admin':
     
-    with st.expander("🔑 API Key 调试器 (仅管理员可见)", expanded=False):
-        st.write("如果下方显示错误，请去 Streamlit 后台 Secrets 更新 Key，并点击 Manage app -> Reboot 重启应用。")
-        st.code(f"当前使用的模型: {CONFIG['AI_MODEL']}", language="text")
-        st.code(f"当前 Key 后 5 位: {OPENAI_KEY[-5:] if OPENAI_KEY else '未读取到'}", language="text")
+    with st.expander("🔑 API Key 调试器", expanded=False):
+        st.write("如报错，请在 Streamlit 后台 Secrets 更新 Key 并重启。")
+        st.code(f"AI Model: {CONFIG['AI_MODEL']}", language="text")
+        st.code(f"OpenAI Key (Last 5): {OPENAI_KEY[-5:] if OPENAI_KEY else 'N/A'}", language="text")
         
     frozen_count, frozen_leads = get_frozen_leads_count()
     if frozen_count > 0:
-        st.markdown(f"""
-        <div class="error-alert-box">
-            🚨 <b>系统警报：有 {frozen_count} 个任务因连续重试 3 次失败而被冻结！</b><br>
-            建议操作：1. 检查 API 状态；2. 查看下方具体错误日志。
-        </div>
-        """, unsafe_allow_html=True)
-        with st.expander(f"查看冻结任务详情", expanded=True):
+        st.markdown(f"""<div class="error-alert-box">🚨 <b>{frozen_count} 个任务被冻结</b><br>建议：1. 检查API; 2. 查看下方日志。</div>""", unsafe_allow_html=True)
+        with st.expander(f"查看详情", expanded=True):
             st.dataframe(pd.DataFrame(frozen_leads))
-            if st.button("清除所有冻结任务"):
+            if st.button("清除冻结任务"):
                 supabase.table('leads').delete().eq('is_frozen', True).execute()
                 st.success("已清除"); time.sleep(1); st.rerun()
 
     st.markdown("#### 系统健康状态")
     health = check_api_health(CN_USER, CN_KEY, OPENAI_KEY)
-    
     k1, k2, k3 = st.columns(3)
     def status_pill(title, is_active, detail):
         dot = "dot-green" if is_active else "dot-red"
         text = "运行正常" if is_active else "连接异常"
         st.markdown(f"""<div style="background-color:#1e1f20; padding:20px; border-radius:16px;"><div style="font-size:14px; color:#c4c7c5;">{title}</div><div style="margin-top:10px; font-size:16px; color:white; font-weight:500;"><span class="status-dot {dot}"></span>{text}</div><div style="font-size:12px; color:#8e8e8e; margin-top:5px;">{detail}</div></div>""", unsafe_allow_html=True)
 
-    with k1: status_pill("云数据库", health['supabase'], "Supabase PostgreSQL")
-    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber API")
+    with k1: status_pill("云数据库", health['supabase'], "Supabase")
+    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber")
     with k3: status_pill("AI 引擎", health['openai'], f"OpenAI ({CONFIG['AI_MODEL']})")
-    
-    if health['msg']:
-        st.error(f"诊断报告: {'; '.join(health['msg'])}")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("#### 脏数据清洗 (Dirty Data Cleaner)")
-    st.caption("扫描并强制修复数据库中包含报错信息或占位符的文案。")
-    if st.button("开始全面清洗"):
-        with st.status("正在清洗...", expanded=True) as s:
-            n = admin_clean_dirty_data(client)
-            s.update(label=f"清洗完成！修复了 {n} 条脏数据。", state="complete")
+    if health['msg']: st.error(f"诊断报告: {'; '.join(health['msg'])}")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("#### 沙盒模拟测试")
@@ -637,7 +570,7 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
 
 # --- 💼 WORKBENCH (Sales) ---
 elif selected_nav == "Workbench":
-    my_leads = get_todays_leads(st.session_state['username'], client)
+    my_leads = get_todays_leads(st.session_state['username'])
     total, curr = CONFIG["DAILY_QUOTA"], len(my_leads)
     c_stat, c_action = st.columns([2, 1])
     with c_stat:
@@ -648,7 +581,7 @@ elif selected_nav == "Workbench":
         st.markdown("<br>", unsafe_allow_html=True)
         if curr < total:
             if st.button(f"领取任务 (剩余 {total-curr} 个)"):
-                _, status = claim_daily_tasks(st.session_state['username'], client)
+                _, status = claim_daily_tasks(st.session_state['username'], st.session_state['real_name'], client)
                 if status=="empty": st.error("公池已空，请联系管理员")
                 else: st.rerun()
         else: st.success("今日已领满")
@@ -660,26 +593,24 @@ elif selected_nav == "Workbench":
         if not todos: st.caption("没有待办任务")
         for item in todos:
             with st.expander(f"{item['shop_name']}", expanded=True):
-                # 实时检测是否为脏数据，如果是，尝试修复
-                display_msg = item['ai_message']
-                if "Error" in display_msg or "[" in display_msg:
-                    st.warning("⚠️ 正在自动修复文案... 请稍后刷新")
+                # 检查文案是否存在，如果还没生成（并发延迟），则显示加载中
+                if not item['ai_message']:
+                    st.warning("⚠️ 文案正在生成中，请稍后刷新页面...")
                 else:
-                    st.write(display_msg)
-                
-                c1, c2 = st.columns(2)
-                key = f"clk_{item['id']}"
-                if key not in st.session_state: st.session_state[key] = False
-                if not st.session_state[key]:
-                    if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
-                    c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
-                else:
-                    url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
-                    c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
-                    if c2.button("确认完成", key=f"fin_{item['id']}"):
-                        mark_lead_complete_secure(item['id'], st.session_state['username'])
-                        st.toast(f"积分 +{CONFIG['POINTS_PER_TASK']}")
-                        del st.session_state[key]; time.sleep(1); st.rerun()
+                    st.write(item['ai_message'])
+                    c1, c2 = st.columns(2)
+                    key = f"clk_{item['id']}"
+                    if key not in st.session_state: st.session_state[key] = False
+                    if not st.session_state[key]:
+                        if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
+                        c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
+                    else:
+                        url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
+                        c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
+                        if c2.button("确认完成", key=f"fin_{item['id']}"):
+                            mark_lead_complete_secure(item['id'], st.session_state['username'])
+                            st.toast(f"积分 +{CONFIG['POINTS_PER_TASK']}")
+                            del st.session_state[key]; time.sleep(1); st.rerun()
     with tabs[1]:
         dones = [x for x in my_leads if x.get('is_contacted')]
         if dones:
@@ -778,15 +709,15 @@ elif selected_nav == "Import":
                 for i in range(0, len(plist), 500):
                     batch = plist[i:i+500]; res = process_checknumber_task(batch, CN_KEY, CN_USER)
                     valid.extend([p for p in batch if res.get(p)=='valid']); time.sleep(1)
-                s.write(f"有效号码 {len(valid)} 个，生成话术中...")
-                rows = []; bar = st.progress(0)
+                
+                # 🔥 进货时只存号码和状态，不生成文案
+                s.write(f"有效号码 {len(valid)} 个，正在存入公池...")
+                rows = []
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
-                    msg = get_ai_message_sniper(client, shp, lnk, "Sales")
-                    if CONFIG["FALLBACK_SIGNATURE"] in msg: _, msg, _ = auto_heal_task("new", shp, lnk, 0, client)
-                    rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":msg, "retry_count": 0, "is_frozen": False, "error_log": None})
+                    # Msg 设为 None
+                    rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":None, "retry_count": 0, "is_frozen": False, "error_log": None})
                     if len(rows)>=100: admin_bulk_upload_to_pool(rows); rows=[]
-                    bar.progress((idx+1)/len(valid))
                 if rows: admin_bulk_upload_to_pool(rows)
                 s.update(label="入库完成", state="complete")
             time.sleep(1); st.rerun()
