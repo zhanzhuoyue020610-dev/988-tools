@@ -66,21 +66,52 @@ def create_user(u, p, n, role="sales"):
         return True
     except: return False
 
-# --- 🔥 新增：获取用户详细历史数据 ---
+# --- 🔥 新增：每日绩效透视逻辑 ---
+def get_user_daily_performance(username):
+    """
+    聚合查询：获取该员工每一天的【领取数】和【完成数】
+    """
+    if not supabase: return pd.DataFrame()
+    try:
+        # 1. 拉取该员工所有历史数据的时间戳
+        res = supabase.table('leads').select('assigned_at, completed_at').eq('assigned_to', username).execute()
+        df = pd.DataFrame(res.data)
+        
+        if df.empty: return pd.DataFrame()
+
+        # 2. 处理领取数据 (按 assigned_at 聚合)
+        df['assign_date'] = pd.to_datetime(df['assigned_at']).dt.date
+        daily_claim = df.groupby('assign_date').size().rename("领取量")
+
+        # 3. 处理完成数据 (按 completed_at 聚合)
+        # 过滤掉没完成的 (completed_at is null)
+        df_done = df[df['completed_at'].notna()].copy()
+        df_done['done_date'] = pd.to_datetime(df_done['completed_at']).dt.date
+        daily_done = df_done.groupby('done_date').size().rename("完成量")
+
+        # 4. 合并两张表 (Outer Join)，按日期索引
+        stats = pd.concat([daily_claim, daily_done], axis=1).fillna(0).astype(int)
+        
+        # 5. 按日期倒序排列 (最近的在上面)
+        stats = stats.sort_index(ascending=False)
+        return stats
+    except Exception as e:
+        print(e)
+        return pd.DataFrame()
+
 def get_user_historical_data(username):
     """获取特定业务员的历史总数据和处理清单"""
     if not supabase: return 0, 0, pd.DataFrame()
     try:
-        # 1. 历史总领取 (Count all rows assigned to user)
+        # 1. 历史总领取
         res_claimed = supabase.table('leads').select('id', count='exact').eq('assigned_to', username).execute()
         total_claimed = res_claimed.count
 
-        # 2. 历史总完成 (Count all rows assigned + contacted)
+        # 2. 历史总完成
         res_done = supabase.table('leads').select('id', count='exact').eq('assigned_to', username).eq('is_contacted', True).execute()
         total_done = res_done.count
 
-        # 3. 处理过的客户列表 (限制最近 2000 条以防卡顿)
-        # 字段：店铺名、电话、链接、完成时间
+        # 3. 处理过的客户列表
         res_list = supabase.table('leads').select('shop_name, phone, shop_link, completed_at')\
             .eq('assigned_to', username)\
             .eq('is_contacted', True)\
@@ -90,9 +121,7 @@ def get_user_historical_data(username):
         
         df_history = pd.DataFrame(res_list.data)
         return total_claimed, total_done, df_history
-    except Exception as e:
-        print(e)
-        return 0, 0, pd.DataFrame()
+    except: return 0, 0, pd.DataFrame()
 
 # --- 库存与回收 ---
 def get_public_pool_count():
@@ -236,31 +265,13 @@ st.markdown("""
 <style>
     .stApp { background-color: #121212 !important; color: #e0e0e0 !important; }
     header { visibility: visible !important; background-color: transparent !important; }
-    
     .stProgress > div > div > div > div { background-color: #4CAF50 !important; }
-    
-    /* 报警动画 */
-    @keyframes pulse {
-        0% { background-color: #ff4b4b; }
-        50% { background-color: #ff0000; }
-        100% { background-color: #ff4b4b; }
-    }
-    .low-stock-alert {
-        padding: 15px; color: white; font-weight: bold; text-align: center;
-        border-radius: 8px; margin-bottom: 20px; animation: pulse 2s infinite; border: 2px solid #ffcccc;
-    }
-    
-    div[data-testid="stExpander"], div[data-testid="stForm"], div[data-testid="stDataFrame"] {
-        background-color: #1e1e1e !important; border: 1px solid #333 !important; border-radius: 6px;
-    }
+    @keyframes pulse { 0% { background-color: #ff4b4b; } 50% { background-color: #ff0000; } 100% { background-color: #ff4b4b; } }
+    .low-stock-alert { padding: 15px; color: white; font-weight: bold; text-align: center; border-radius: 8px; margin-bottom: 20px; animation: pulse 2s infinite; border: 2px solid #ffcccc; }
+    div[data-testid="stExpander"], div[data-testid="stForm"], div[data-testid="stDataFrame"] { background-color: #1e1e1e !important; border: 1px solid #333 !important; border-radius: 6px; }
     button { color: white !important; }
-    div.stButton > button {
-        background-color: #0078d4 !important; border: 1px solid #0078d4 !important;
-        width: 100%; font-weight: bold;
-    }
-    button:disabled {
-        background-color: #555 !important; border-color: #555 !important; color: #aaa !important; cursor: not-allowed;
-    }
+    div.stButton > button { background-color: #0078d4 !important; border: 1px solid #0078d4 !important; width: 100%; font-weight: bold; }
+    button:disabled { background-color: #555 !important; border-color: #555 !important; color: #aaa !important; cursor: not-allowed; }
     h1, h2, h3 { color: #fff !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -372,7 +383,7 @@ elif selected_nav == "Logs" and st.session_state['role'] == 'admin':
             if not df_done.empty: st.dataframe(df_done, use_container_width=True)
             else: st.info("无数据")
 
-# --- 👥 TEAM (增强版) ---
+# --- 👥 TEAM (包含每日绩效) ---
 elif selected_nav == "Team" and st.session_state['role'] == 'admin':
     st.markdown("### 👥 团队管理")
     users_raw = supabase.table('users').select("*").execute().data
@@ -395,9 +406,11 @@ elif selected_nav == "Team" and st.session_state['role'] == 'admin':
         if selected_username:
             user_info = df_users[df_users['username'] == selected_username].iloc[0]
             
-            # 🔥 获取历史数据
+            # 🔥 获取全量数据
             tot_claimed, tot_done, df_history = get_user_historical_data(selected_username)
-            
+            # 🔥 获取每日绩效表
+            df_daily = get_user_daily_performance(selected_username)
+
             st.markdown(f"### 👤 {user_info['real_name']}")
             st.info(f"Role: {user_info['role']} | Last Seen: {str(user_info.get('last_seen', 'Never'))[:16]}")
             
@@ -406,28 +419,43 @@ elif selected_nav == "Team" and st.session_state['role'] == 'admin':
             k1.metric("📦 历史总领取", tot_claimed)
             k2.metric("✅ 历史总完成", tot_done)
             
-            st.markdown("#### 📜 已处理客户列表 (Processed History)")
-            if not df_history.empty:
-                # 优化表格显示，包含链接
-                st.dataframe(
-                    df_history,
-                    column_config={
-                        "shop_link": st.column_config.LinkColumn("店铺链接"),
-                        "completed_at": st.column_config.DatetimeColumn("处理时间", format="D MMM YYYY, h:mm a")
-                    },
-                    use_container_width=True
-                )
-            else:
-                st.info("该员工暂无处理记录")
+            st.divider()
+            
+            # --- Tab 区域 ---
+            t1, t2, t3 = st.tabs(["📅 每日绩效 (Daily)", "📜 处理明细 (History)", "⚙️ 设置"])
+            
+            with t1:
+                st.markdown("#### 每日领取与完成记录")
+                if not df_daily.empty:
+                    # 图表展示
+                    st.bar_chart(df_daily)
+                    # 表格展示
+                    st.dataframe(df_daily, use_container_width=True)
+                else:
+                    st.info("暂无每日活动记录")
 
-            st.markdown("---")
-            with st.expander("🗑️ 删除账号并回收任务"):
-                st.error("警告：删除后，该员工名下【未完成】的任务将自动重置回公共池。")
-                confirm_del = st.text_input(f"请输入 '{selected_username}' 确认删除")
-                if st.button("确认删除"):
-                    if confirm_del == selected_username:
-                        if delete_user_and_recycle(selected_username):
-                            st.success("删除成功，任务已回收！"); time.sleep(1); st.rerun()
+            with t2:
+                st.markdown("#### 📜 已处理客户列表")
+                if not df_history.empty:
+                    st.dataframe(
+                        df_history,
+                        column_config={
+                            "shop_link": st.column_config.LinkColumn("店铺链接"),
+                            "completed_at": st.column_config.DatetimeColumn("处理时间", format="D MMM YYYY, h:mm a")
+                        },
+                        use_container_width=True
+                    )
+                else:
+                    st.info("暂无记录")
+
+            with t3:
+                with st.expander("🗑️ 删除账号并回收任务"):
+                    st.error("警告：删除后，该员工名下【未完成】的任务将自动重置回公共池。")
+                    confirm_del = st.text_input(f"请输入 '{selected_username}' 确认删除")
+                    if st.button("确认删除"):
+                        if confirm_del == selected_username:
+                            if delete_user_and_recycle(selected_username):
+                                st.success("删除成功，任务已回收！"); time.sleep(1); st.rerun()
 
 # --- 🏭 IMPORT (含报警机制) ---
 elif selected_nav == "Import" and st.session_state['role'] == 'admin':
