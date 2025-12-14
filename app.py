@@ -2,14 +2,13 @@ import streamlit as st
 import pandas as pd
 import re
 import urllib.parse
-from openai import OpenAI, AuthenticationError, APIConnectionError
+from openai import OpenAI, AuthenticationError, APIConnectionError, RateLimitError, NotFoundError
 import requests
 import warnings
 import time
 import io
 import os
 import hashlib
-import random
 from datetime import date, datetime, timedelta
 
 try:
@@ -29,7 +28,9 @@ CONFIG = {
     "LOW_STOCK_THRESHOLD": 300,
     "POINTS_PER_TASK": 10,
     "MAX_RETRIES": 3,
-    "FALLBACK_SIGNATURE": "Super Admin (988 Group)" 
+    "FALLBACK_SIGNATURE": "Super Admin (988 Group)",
+    # 🔥 修改：改用 mini 模型，兼容性更好，且更便宜
+    "AI_MODEL": "gpt-4o-mini" 
 }
 
 # ==========================================
@@ -98,48 +99,66 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 防崩溃 AI 调用逻辑 ---
+# --- 🔥 调试版 AI 调用逻辑 ---
 
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
-        local_quotes = [
-            "心有繁星，沐光而行。",
-            "坚持是另一种形式的天赋。",
-            "沉稳是职场最高级的修养。",
-            "每一步都算数，未来可期。",
-            "保持专注，时间会给你答案。"
-        ]
-        
+        local_quotes = ["心有繁星，沐光而行。", "坚持是另一种形式的天赋。", "沉稳是职场最高级的修养。", "每一步都算数。", "保持专注，未来可期。"]
         try:
             if not client: raise Exception("No Client")
-            prompt = "你是专业的职场心理咨询师。请生成一句温暖、治愈、给人内心力量的中文短句，不超过25个字。不要带引号，语气要平和高级。"
+            prompt = "你是专业的职场心理咨询师。请生成一句温暖、治愈的中文短句，不超过25字。不要带引号。"
             res = client.chat.completions.create(
-                model="gpt-4o", 
+                model=CONFIG["AI_MODEL"], 
                 messages=[{"role":"user","content":prompt}],
                 temperature=0.9, max_tokens=60
             )
             st.session_state["motivation_quote"] = res.choices[0].message.content
         except:
             st.session_state["motivation_quote"] = random.choice(local_quotes)
-            
     return st.session_state["motivation_quote"]
 
-def get_ai_message_sniper(client, shop, link, rep_name):
+def get_ai_message_sniper(client, shop, link, rep_name, debug_mode=False):
+    """
+    debug_mode=True 时，会返回真实的报错信息，而不是离线模版
+    """
     offline_template = f"您好! 我们关注到 {shop} 在 Ozon 的选品很有潜力。988 Group 专注中俄供应链，可协助源头采购与物流，期待与您交流。"
+    
     if not shop or str(shop).lower() in ['nan', 'none', '']: return "数据缺失"
+    
     prompt = f"Role: Supply Chain Sales '{rep_name}'. Target: {shop}. Link: {link}. Write short Russian WhatsApp intro offering sourcing services."
+    
     try:
-        if not client: return offline_template
-        res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
+        if not client: raise Exception("Client未初始化")
+        
+        res = client.chat.completions.create(
+            model=CONFIG["AI_MODEL"], # 使用兼容性更好的模型
+            messages=[{"role":"user","content":prompt}]
+        )
         return res.choices[0].message.content
-    except:
+
+    except AuthenticationError as e:
+        if debug_mode: return f"⚠️ 权限错误 (401): 请检查Key是否正确。{e}"
+        return offline_template
+    except NotFoundError as e:
+        if debug_mode: return f"⚠️ 模型错误 (404): 你的账号无法使用 {CONFIG['AI_MODEL']} 模型，请尝试更换 Key 或充值。{e}"
+        return offline_template
+    except RateLimitError as e:
+        if debug_mode: return f"⚠️ 限流错误 (429): 请求太快或余额不足 (即使显示有余额也可能欠费)。{e}"
+        return offline_template
+    except Exception as e:
+        if debug_mode: return f"⚠️ 未知错误: {str(e)}"
         return offline_template
 
 def auto_heal_task(task_id, shop, link, current_retries, client):
     if current_retries >= CONFIG["MAX_RETRIES"]: return False, None, "MAX_RETRIES_EXCEEDED"
-    new_msg = get_ai_message_sniper(client, shop, link, "Sales")
-    if not new_msg: return False, new_msg, "GENERATION_FAILED"
-    else: return True, new_msg, None
+    
+    # 自动自愈时不开启 debug 模式，防止报错暴露给业务员
+    new_msg = get_ai_message_sniper(client, shop, link, "Sales", debug_mode=False)
+    
+    if not new_msg or CONFIG["FALLBACK_SIGNATURE"] in new_msg:
+        return False, new_msg, "GENERATION_FAILED"
+    else:
+        return True, new_msg, None
 
 def scan_and_heal_leads(leads_list, client):
     if not leads_list: return []
@@ -152,6 +171,8 @@ def scan_and_heal_leads(leads_list, client):
                 lead['ai_message'] = new_msg
                 healed_leads.append(lead)
             else:
+                # 即使修复失败，也不要让业务员看到报错代码，显示原来的（虽然是保底文案，但至少是人话）
+                # 后台记录错误
                 new_count = lead.get('retry_count', 0) + 1
                 is_frozen = True if new_count >= CONFIG["MAX_RETRIES"] else False
                 supabase.table('leads').update({'retry_count': new_count, 'is_frozen': is_frozen, 'error_log': err_code}).eq('id', lead['id']).execute()
@@ -337,13 +358,18 @@ def check_api_health(cn_user, cn_key, openai_key):
         if not openai_key or "sk-" not in openai_key: status["msg"].append("OpenAI: 格式错误")
         else:
             client = OpenAI(api_key=openai_key)
-            client.models.list()
+            # 使用配置的模型进行一次最轻量的测试
+            client.chat.completions.create(
+                model=CONFIG["AI_MODEL"], 
+                messages=[{"role":"user","content":"Hi"}],
+                max_tokens=1
+            )
             status["openai"] = True
     except Exception as e: status["msg"].append(f"OpenAI: {str(e)}")
     return status
 
 # ==========================================
-# 🎨 UI 主题
+# 🎨 GEMINI DARK - PURE LUXURY
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="⚫")
 
@@ -490,11 +516,11 @@ st.markdown("<br>", unsafe_allow_html=True)
 # --- 🖥️ SYSTEM MONITOR (Admin) ---
 if selected_nav == "System" and st.session_state['role'] == 'admin':
     
-    # 🔥 调试面板：显示当前 Key 的状态 (仅管理员可见)
+    # 🔥 调试面板：显示当前 Key 的后 5 位 (仅管理员可见)
     with st.expander("🔑 API Key 调试器 (仅管理员可见)", expanded=False):
         st.write("如果下方显示错误，请去 Streamlit 后台 Secrets 更新 Key，并点击 Manage app -> Reboot 重启应用。")
-        # 🔥 修正点：显示后 5 位，更方便核对
-        st.code(f"当前读取到的 OpenAI Key 后5位: {OPENAI_KEY[-5:] if OPENAI_KEY else '未读取到'}", language="text")
+        st.code(f"当前使用的模型: {CONFIG['AI_MODEL']}", language="text")
+        st.code(f"当前 Key 后 5 位: {OPENAI_KEY[-5:] if OPENAI_KEY else '未读取到'}", language="text")
         
     frozen_count, frozen_leads = get_frozen_leads_count()
     if frozen_count > 0:
@@ -521,7 +547,7 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
 
     with k1: status_pill("云数据库", health['supabase'], "Supabase PostgreSQL")
     with k2: status_pill("验证接口", health['checknumber'], "CheckNumber API")
-    with k3: status_pill("AI 引擎", health['openai'], "OpenAI GPT-4o")
+    with k3: status_pill("AI 引擎", health['openai'], f"OpenAI ({CONFIG['AI_MODEL']})")
     
     if health['msg']:
         st.error(f"诊断报告: {'; '.join(health['msg'])}")
@@ -540,8 +566,7 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
                 s.write(f"提取结果: {nums}"); res = process_checknumber_task(nums, CN_KEY, CN_USER)
                 valid = [p for p in nums if res.get(p)=='valid']; s.write(f"有效号码: {valid}")
                 if valid:
-                    s.write("正在生成 AI 话术...")
-                    msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员")
+                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员", debug_mode=True)
                     s.write(f"生成结果: {msg}")
                 s.update(label="模拟完成", state="complete")
         except Exception as e: st.error(str(e))
