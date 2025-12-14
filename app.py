@@ -56,7 +56,6 @@ def login_user(u, p):
     try:
         res = supabase.table('users').select("*").eq('username', u).eq('password', pwd_hash).execute()
         if res.data:
-            # 管理员登录不更新 last_seen，保持隐身
             if res.data[0]['role'] != 'admin':
                 supabase.table('users').update({'last_seen': datetime.now().isoformat()}).eq('username', u).execute()
             return res.data[0]
@@ -101,7 +100,7 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 AI 逻辑 ---
+# --- 🔥 强化版 AI 逻辑 ---
 
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
@@ -120,13 +119,44 @@ def get_daily_motivation(client):
     return st.session_state["motivation_quote"]
 
 def get_ai_message_sniper(client, shop, link, rep_name, debug_mode=False):
-    offline_template = f"您好! 我们关注到 {shop} 在 Ozon 的选品很有潜力。988 Group 专注中俄供应链，可协助源头采购与物流，期待与您交流。"
-    if not shop or str(shop).lower() in ['nan', 'none', '']: return "数据缺失"
-    prompt = f"Role: Supply Chain Sales '{rep_name}'. Target: {shop}. Link: {link}. Write short Russian WhatsApp intro offering sourcing services."
+    """
+    🔥 升级版 Prompt：严禁使用占位符
+    """
+    # 离线模版 (纯文本，无风险)
+    offline_template = f"Здравствуйте! Заметили ваш магазин {shop} на Ozon. 988 Group занимается поставками из Китая (логистика + выкуп). Можем рассчитать стоимость доставки для вас?"
+    
+    if not shop or str(shop).lower() in ['nan', 'none', '']: return "Error: Data Missing"
+    
+    # 🔥 核心修改：加强 Prompt 约束
+    prompt = f"""
+    Role: Expert Supply Chain Manager '{rep_name}' at 988 Group.
+    Target: Ozon Seller '{shop}' (Link: {link}).
+    Task: Write a short, professional, Russian WhatsApp intro message.
+    
+    CRITICAL RULES:
+    1. NO placeholders like [Your Name], [Insert Date].
+    2. Sign off clearly as '{rep_name} (988 Group)'.
+    3. Do not ask for contact info, just ask if they want a price calculation.
+    4. Keep it under 50 words.
+    5. Mention we offer "China sourcing + Logistics to Moscow".
+    """
+    
     try:
         if not client: raise Exception("Client未初始化")
-        res = client.chat.completions.create(model=CONFIG["AI_MODEL"], messages=[{"role":"user","content":prompt}])
-        return res.choices[0].message.content
+        
+        res = client.chat.completions.create(
+            model=CONFIG["AI_MODEL"],
+            messages=[{"role":"user","content":prompt}]
+        )
+        content = res.choices[0].message.content.strip()
+        
+        # 🔥 二次校验：如果 AI 还是输出了占位符，直接丢弃，使用离线模版
+        if "[" in content or "]" in content:
+            if debug_mode: return f"AI 生成了非法占位符: {content}"
+            return offline_template
+            
+        return content
+
     except AuthenticationError as e:
         if debug_mode: return f"⚠️ 权限错误 (401): 请检查Key。{e}"
         return offline_template
@@ -136,27 +166,73 @@ def get_ai_message_sniper(client, shop, link, rep_name, debug_mode=False):
 
 def auto_heal_task(task_id, shop, link, current_retries, client):
     if current_retries >= CONFIG["MAX_RETRIES"]: return False, None, "MAX_RETRIES_EXCEEDED"
+    
     new_msg = get_ai_message_sniper(client, shop, link, "Sales", debug_mode=False)
-    if not new_msg or CONFIG["FALLBACK_SIGNATURE"] in new_msg: return False, new_msg, "GENERATION_FAILED"
-    else: return True, new_msg, None
+    
+    # 失败判定标准：空、报错代码、或者包含占位符
+    if not new_msg or "Error:" in new_msg or "[" in new_msg:
+        return False, new_msg, "GENERATION_FAILED"
+    else:
+        return True, new_msg, None
 
 def scan_and_heal_leads(leads_list, client):
     if not leads_list: return []
     healed_leads = []
     for lead in leads_list:
-        if CONFIG["FALLBACK_SIGNATURE"] in lead['ai_message']:
+        msg = lead['ai_message']
+        # 🔥 扫描脏数据特征：包含 'Error code', '401', 或者占位符 '['
+        is_dirty = ("Error" in msg) or ("401" in msg) or ("[" in msg and "]" in msg)
+        
+        if is_dirty:
             success, new_msg, err_code = auto_heal_task(lead['id'], lead['shop_name'], lead['shop_link'], lead.get('retry_count', 0), client)
             if success:
                 supabase.table('leads').update({'ai_message': new_msg, 'retry_count': lead.get('retry_count', 0)+1, 'error_log': 'Fixed'}).eq('id', lead['id']).execute()
                 lead['ai_message'] = new_msg
                 healed_leads.append(lead)
             else:
-                new_count = lead.get('retry_count', 0) + 1
-                is_frozen = True if new_count >= CONFIG["MAX_RETRIES"] else False
-                supabase.table('leads').update({'retry_count': new_count, 'is_frozen': is_frozen, 'error_log': err_code}).eq('id', lead['id']).execute()
-                if not is_frozen: healed_leads.append(lead)
-        else: healed_leads.append(lead)
+                # 修复失败，保留原样但标记错误
+                healed_leads.append(lead)
+        else:
+            healed_leads.append(lead)
     return healed_leads
+
+# --- 🔥 新增：管理员一键清洗脏数据 ---
+def admin_clean_dirty_data(client):
+    """
+    暴力扫描全库，重写所有报错的文案
+    """
+    if not supabase: return 0
+    try:
+        # 1. 查找所有含有 "Error" 或 "401" 或 "[" 的记录
+        # Supabase 的 ilike 语法：列名.ilike.%关键词%
+        # 由于 OR 查询比较麻烦，我们分三次查，简单粗暴
+        
+        # 查找报错的
+        res1 = supabase.table('leads').select("*").ilike('ai_message', '%Error%').eq('is_contacted', False).execute()
+        # 查找带占位符的
+        res2 = supabase.table('leads').select("*").ilike('ai_message', '%[%').eq('is_contacted', False).execute()
+        
+        dirty_leads = res1.data + res2.data
+        # 去重
+        seen = set()
+        unique_dirty = []
+        for d in dirty_leads:
+            if d['id'] not in seen:
+                unique_dirty.append(d)
+                seen.add(d['id'])
+        
+        count = 0
+        for lead in unique_dirty:
+            # 强制重写
+            new_msg = get_ai_message_sniper(client, lead['shop_name'], lead['shop_link'], "Sales", debug_mode=False)
+            if "Error" not in new_msg and "[" not in new_msg:
+                supabase.table('leads').update({'ai_message': new_msg}).eq('id', lead['id']).execute()
+                count += 1
+                
+        return count
+    except Exception as e:
+        print(e)
+        return 0
 
 # --- 数据查询 ---
 def get_user_daily_performance(username):
@@ -236,7 +312,10 @@ def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
+    
+    # 领取前先自检手头的任务
     existing = scan_and_heal_leads(existing, client)
+    
     if current_count >= CONFIG["DAILY_QUOTA"]: return existing, "full"
     needed = CONFIG["DAILY_QUOTA"] - current_count
     pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').eq('is_frozen', False).limit(needed).execute().data
@@ -244,6 +323,7 @@ def claim_daily_tasks(username, client):
         ids_to_update = [x['id'] for x in pool_leads]
         supabase.table('leads').update({'assigned_to': username, 'assigned_at': today_str}).in_('id', ids_to_update).execute()
         final_list = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
+        # 领取的新任务也自检一遍
         final_list = scan_and_heal_leads(final_list, client)
         return final_list, "claimed"
     else: return existing, "empty"
@@ -264,7 +344,6 @@ def get_daily_logs(query_date):
     raw_claims = supabase.table('leads').select('assigned_to, assigned_at').eq('assigned_at', query_date).execute().data
     df_claims = pd.DataFrame(raw_claims)
     if not df_claims.empty:
-        # 🔥 过滤 Admin 日志
         df_claims = df_claims[df_claims['assigned_to'] != 'admin'] 
         df_claim_summary = df_claims.groupby('assigned_to').size().reset_index(name='领取数量')
     else: df_claim_summary = pd.DataFrame(columns=['assigned_to', '领取数量'])
@@ -273,7 +352,6 @@ def get_daily_logs(query_date):
     raw_done = supabase.table('leads').select('assigned_to, completed_at').gte('completed_at', start_dt).lte('completed_at', end_dt).execute().data
     df_done = pd.DataFrame(raw_done)
     if not df_done.empty:
-        # 🔥 过滤 Admin 日志
         df_done = df_done[df_done['assigned_to'] != 'admin']
         df_done_summary = df_done.groupby('assigned_to').size().reset_index(name='实际处理')
     else: df_done_summary = pd.DataFrame(columns=['assigned_to', '实际处理'])
@@ -331,7 +409,6 @@ def check_api_health(cn_user, cn_key, openai_key):
         headers = {"X-API-Key": cn_key}
         test_url = f"{CONFIG['CN_BASE_URL']}" 
         resp = requests.get(test_url, headers=headers, params={'user_id': cn_user}, timeout=5, verify=False)
-        # 🔥 核心修复：接受 405 (Method Not Allowed) 为正常连接，因为这证明服务器收到了请求
         if resp.status_code in [200, 400, 404, 405]: status["checknumber"] = True
         else: status["msg"].append(f"CheckNumber: {resp.status_code}")
     except Exception as e: status["msg"].append(f"CheckNumber: {str(e)}")
@@ -496,7 +573,6 @@ st.markdown("<br>", unsafe_allow_html=True)
 # --- 🖥️ SYSTEM MONITOR (Admin) ---
 if selected_nav == "System" and st.session_state['role'] == 'admin':
     
-    # 🔥 调试面板：显示当前 Key 的后 5 位 (仅管理员可见)
     with st.expander("🔑 API Key 调试器 (仅管理员可见)", expanded=False):
         st.write("如果下方显示错误，请去 Streamlit 后台 Secrets 更新 Key，并点击 Manage app -> Reboot 重启应用。")
         st.code(f"当前使用的模型: {CONFIG['AI_MODEL']}", language="text")
@@ -531,6 +607,14 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
     
     if health['msg']:
         st.error(f"诊断报告: {'; '.join(health['msg'])}")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("#### 脏数据清洗 (Dirty Data Cleaner)")
+    st.caption("扫描并强制修复数据库中包含报错信息或占位符的文案。")
+    if st.button("开始全面清洗"):
+        with st.status("正在清洗...", expanded=True) as s:
+            n = admin_clean_dirty_data(client)
+            s.update(label=f"清洗完成！修复了 {n} 条脏数据。", state="complete")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("#### 沙盒模拟测试")
@@ -576,8 +660,13 @@ elif selected_nav == "Workbench":
         if not todos: st.caption("没有待办任务")
         for item in todos:
             with st.expander(f"{item['shop_name']}", expanded=True):
-                if CONFIG["FALLBACK_SIGNATURE"] in item['ai_message']: st.warning("⚠️ 此文案为保底文案，正在尝试自动修复...")
-                else: st.write(item['ai_message'])
+                # 实时检测是否为脏数据，如果是，尝试修复
+                display_msg = item['ai_message']
+                if "Error" in display_msg or "[" in display_msg:
+                    st.warning("⚠️ 正在自动修复文案... 请稍后刷新")
+                else:
+                    st.write(display_msg)
+                
                 c1, c2 = st.columns(2)
                 key = f"clk_{item['id']}"
                 if key not in st.session_state: st.session_state[key] = False
