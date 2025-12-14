@@ -34,7 +34,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑 (保持不变)
+# ☁️ 数据库与核心逻辑 (不变)
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -100,7 +100,6 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 AI 生成 ---
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
         local_quotes = ["心有繁星，沐光而行。", "坚持是另一种形式的天赋。", "沉稳是职场最高级的修养。", "每一步都算数。", "保持专注，未来可期。"]
@@ -143,7 +142,6 @@ def generate_and_update_task(lead, client, rep_name):
         return True
     except: return False
 
-# --- 数据查询 ---
 def get_user_daily_performance(username):
     if not supabase: return pd.DataFrame()
     try:
@@ -229,7 +227,6 @@ def claim_daily_tasks(username, real_name, client):
     if pool_leads:
         ids_to_update = [x['id'] for x in pool_leads]
         supabase.table('leads').update({'assigned_to': username, 'assigned_at': today_str}).in_('id', ids_to_update).execute()
-        
         fresh_tasks = supabase.table('leads').select("*").in_('id', ids_to_update).execute().data
         
         with st.status(f"正在为 {username} 生成专属文案...", expanded=True) as status:
@@ -341,7 +338,7 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 UI 主题 (Ultimate Dark)
+# 🎨 UI 主题 (Ultimate Clean & Dark)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="⚫")
 
@@ -353,25 +350,25 @@ st.markdown("""
     :root {
         --bg-color: #131314;           
         --surface-color: #1e1f20;      
-        --input-bg: #2d2e33;           /* 修正：更深的灰色 */
+        --input-bg: #282a2c;           
         --text-primary: #e3e3e3;       
         --text-secondary: #8e8e8e;     
         --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
-        --btn-primary: #6366f1;        /* 星云紫 */
-        --btn-hover: #818cf8;          
+        --btn-primary: linear-gradient(90deg, #4b90ff, #ff5546); /* 按钮也用 Gemini 渐变 */
+        --btn-hover: linear-gradient(90deg, #5da0ff, #ff6b5c);
         --btn-text: #ffffff;           
     }
 
-    /* 全局颜色重置 - 暴力覆盖所有可能的白色 */
+    /* 1. 全局去白重置 */
     .stApp, div, section, header, footer {
         background-color: var(--bg-color);
         color: var(--text-primary);
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
+        text-shadow: none !important; /* 核心：去除文字黑框 */
     }
-    
     header { visibility: hidden !important; } 
     
-    /* 标题与文字 */
+    /* 2. 标题排版 */
     .gemini-header {
         font-weight: 600; font-size: 28px;
         background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
@@ -379,32 +376,31 @@ st.markdown("""
     }
     .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
 
-    /* 积分胶囊 */
+    /* 3. 积分胶囊 */
     .points-pill {
         background-color: rgba(255, 255, 255, 0.05); color: #e3e3e3; border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 6px 16px; border-radius: 4px; font-size: 13px; font-family: 'Inter', monospace; letter-spacing: 0.5px;
+        padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace;
     }
 
-    /* 导航栏 (Radio) */
+    /* 4. 导航栏 (Radio) */
     div[data-testid="stRadio"] > div { background-color: var(--surface-color) !important; border: none; padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
-    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
+    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; text-shadow: none !important; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
 
-    /* 容器与卡片 */
+    /* 5. 容器与卡片 */
     div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { 
         background-color: var(--surface-color) !important; 
-        border: 1px solid #333 !important; /* 微弱边框增强质感 */
+        border: 1px solid #333 !important; 
         border-radius: 12px; 
-        padding: 10px; 
+        padding: 15px; 
     }
     div[data-testid="stExpander"] details { border: none !important; }
-    div[data-testid="stExpander"] summary { background-color: transparent !important; color: white !important; }
-    div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
-
-    /* 按钮系统 - 星云紫 */
-    button { color: var(--btn-text) !important; }
+    div[data-testid="stExpander"] summary { color: white !important; }
+    
+    /* 6. 按钮系统 - 流光渐变 */
+    button { color: var(--btn-text) !important; text-shadow: none !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
-        background-color: var(--btn-primary) !important; 
+        background: var(--btn-primary) !important; 
         color: var(--btn-text) !important; 
         border: none !important; 
         border-radius: 50px !important; 
@@ -412,59 +408,47 @@ st.markdown("""
         font-weight: 600; 
         letter-spacing: 1px; 
         transition: all 0.2s ease; 
-        box-shadow: 0 4px 10px rgba(99, 102, 241, 0.3); /* 紫色光晕 */
+        box-shadow: 0 4px 15px rgba(75, 144, 255, 0.3); /* 蓝色光晕 */
     }
     div.stButton > button:hover, div.stFormSubmitButton > button:hover { 
-        background-color: var(--btn-hover) !important; 
         transform: translateY(-2px); 
-        box-shadow: 0 6px 15px rgba(99, 102, 241, 0.5);
+        box-shadow: 0 6px 20px rgba(75, 144, 255, 0.5);
     }
 
-    /* ❌❌❌ 终极去白：文件上传 ❌❌❌ */
-    [data-testid="stFileUploader"] { background-color: transparent !important; }
-    [data-testid="stFileUploader"] section { 
-        background-color: var(--input-bg) !important; 
-        border: 1px dashed #555 !important;
-    }
-    [data-testid="stFileUploader"] button { 
-        background-color: #303134 !important; 
-        color: #e3e3e3 !important; 
-        border: 1px solid #444 !important; 
-    }
-    /* 隐藏上传区域内的黑色小字 */
-    [data-testid="stFileUploader"] small { color: #888 !important; }
-
-    /* ❌❌❌ 终极去白：输入框 ❌❌❌ */
-    /* 覆盖 BaseWeb Input 容器 */
-    div[data-baseweb="input"], div[data-baseweb="base-input"] { 
+    /* 7. 输入框 - 强制深灰 (去除所有白色背景) */
+    div[data-baseweb="input"], div[data-baseweb="select"] { 
         background-color: var(--input-bg) !important; 
         border: 1px solid #444 !important; 
         border-radius: 8px !important;
         color: white !important;
     }
-    /* 覆盖实际 Input 元素 */
-    input.st-ai, input.st-ah, textarea.st-ai, textarea.st-ah { 
-        background-color: transparent !important;
-        color: white !important;
-    }
-    /* 覆盖下拉菜单 */
-    div[data-baseweb="select"] > div {
-        background-color: var(--input-bg) !important;
-        color: white !important;
-        border-color: #444 !important;
-    }
+    input { color: white !important; caret-color: #4b90ff; }
+    ::placeholder { color: #5f6368 !important; }
     
-    /* 表格 */
+    /* 8. 文件上传 - 深色化 */
+    [data-testid="stFileUploader"] { background-color: transparent !important; }
+    [data-testid="stFileUploader"] section { background-color: var(--input-bg) !important; border: 1px dashed #555 !important; }
+    [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; }
+    
+    /* 9. 告急提醒 - 红色透明 */
+    .error-alert-box { 
+        background-color: rgba(255, 95, 86, 0.15); 
+        border: 1px solid #ff5f56; 
+        color: #ff5f56; 
+        padding: 15px; 
+        border-radius: 8px; 
+        margin-bottom: 20px; 
+        text-shadow: none !important; /* 去黑框 */
+    }
+
+    /* 10. 表格 & 进度条 */
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: var(--surface-color) !important; color: var(--text-secondary); }
-    
-    /* 进度条 */
-    .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
+    .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 6px !important; border-radius: 10px; }
     
     .status-dot { height: 6px; width: 6px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle;}
     .dot-green { background-color: #6dd58c; }
     .dot-red { background-color: #ff5f56; }
     
-    .error-alert-box { background-color: rgba(255, 95, 86, 0.1); border: 1px solid #ff5f56; color: #ff5f56; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
     h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
     p, span, div, label { color: #c4c7c5 !important; }
     .stCaption { color: #8e8e8e !important; }
@@ -485,8 +469,8 @@ if not st.session_state['logged_in']:
         st.markdown('<div class="warm-quote" style="text-align:center;">专业 · 高效 · 全球化</div>', unsafe_allow_html=True)
         
         with st.form("login", border=False):
-            u = st.text_input("Account ID", placeholder="请输入账号")
-            p = st.text_input("Password", type="password", placeholder="请输入密码")
+            u = st.text_input("账号", placeholder="请输入用户名")
+            p = st.text_input("密码", type="password", placeholder="请输入密码")
             st.markdown("<br>", unsafe_allow_html=True)
             if st.form_submit_button("登 录"):
                 user = login_user(u, p)
@@ -596,7 +580,7 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
                 s.write(f"提取结果: {nums}"); res = process_checknumber_task(nums, CN_KEY, CN_USER)
                 valid = [p for p in nums if res.get(p)=='valid']; s.write(f"有效号码: {valid}")
                 if valid:
-                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员")
+                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员", debug_mode=True)
                     s.write(f"生成结果: {msg}")
                 s.update(label="模拟完成", state="complete")
         except Exception as e: st.error(str(e))
@@ -626,23 +610,21 @@ elif selected_nav == "Workbench":
         if not todos: st.caption("没有待办任务")
         for item in todos:
             with st.expander(f"{item['shop_name']}", expanded=True):
-                if not item['ai_message']:
-                    st.warning("⚠️ 文案生成中，请稍后刷新...")
+                if CONFIG["FALLBACK_SIGNATURE"] in item['ai_message']: st.warning("⚠️ 此文案为保底文案，正在尝试自动修复...")
+                else: st.write(item['ai_message'])
+                c1, c2 = st.columns(2)
+                key = f"clk_{item['id']}"
+                if key not in st.session_state: st.session_state[key] = False
+                if not st.session_state[key]:
+                    if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
+                    c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
                 else:
-                    st.write(item['ai_message'])
-                    c1, c2 = st.columns(2)
-                    key = f"clk_{item['id']}"
-                    if key not in st.session_state: st.session_state[key] = False
-                    if not st.session_state[key]:
-                        if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
-                        c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
-                    else:
-                        url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
-                        c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
-                        if c2.button("确认完成", key=f"fin_{item['id']}"):
-                            mark_lead_complete_secure(item['id'], st.session_state['username'])
-                            st.toast(f"积分 +{CONFIG['POINTS_PER_TASK']}")
-                            del st.session_state[key]; time.sleep(1); st.rerun()
+                    url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
+                    c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
+                    if c2.button("确认完成", key=f"fin_{item['id']}"):
+                        mark_lead_complete_secure(item['id'], st.session_state['username'])
+                        st.toast(f"积分 +{CONFIG['POINTS_PER_TASK']}")
+                        del st.session_state[key]; time.sleep(1); st.rerun()
     with tabs[1]:
         dones = [x for x in my_leads if x.get('is_contacted')]
         if dones:
@@ -719,7 +701,7 @@ elif selected_nav == "Team":
 # --- 📥 IMPORT (Admin) ---
 elif selected_nav == "Import":
     pool = get_public_pool_count()
-    if pool < CONFIG["LOW_STOCK_THRESHOLD"]: st.error(f"库存告急警告：公共池仅剩 {pool} 个客户！")
+    if pool < CONFIG["LOW_STOCK_THRESHOLD"]: st.markdown(f"""<div class="error-alert-box">🚨 <b>库存告急</b><br>仅剩 {pool} 个客户，请尽快进货。</div>""", unsafe_allow_html=True)
     else: st.metric("公共池库存", pool)
     
     with st.expander("每日归仓工具"):
@@ -742,7 +724,6 @@ elif selected_nav == "Import":
                     batch = plist[i:i+500]; res = process_checknumber_task(batch, CN_KEY, CN_USER)
                     valid.extend([p for p in batch if res.get(p)=='valid']); time.sleep(1)
                 
-                # 🔥 进货时 Msg 设为 None
                 s.write(f"有效号码 {len(valid)} 个，正在存入公池...")
                 rows = []
                 for idx, p in enumerate(valid):
