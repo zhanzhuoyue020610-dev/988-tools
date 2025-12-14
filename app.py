@@ -11,7 +11,7 @@ import os
 import hashlib
 import cloudscraper
 from bs4 import BeautifulSoup 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 try:
     from supabase import create_client, Client
@@ -65,13 +65,12 @@ def create_user(u, p, n, role="sales"):
         return True
     except: return False
 
-# --- 🔥 新增：删除用户并回收线索 ---
+# --- 🔥 删除用户并回收线索 ---
 def delete_user_and_recycle(username):
     """删除业务员，并将其未完成的任务全部踢回公共池"""
     if not supabase: return False
     try:
-        # 1. 查找该用户所有【未完成】的任务
-        # 逻辑：将 assigned_to 置空，状态重置，让其他人可以领
+        # 1. 查找该用户所有【未完成】的任务，重置为未分配状态
         supabase.table('leads').update({
             'assigned_to': None,
             'assigned_at': None,
@@ -106,7 +105,7 @@ def admin_bulk_upload_to_pool(leads_data):
         return True
     except: return False
 
-# --- 🔥 修改：主动领取逻辑 ---
+# --- 🔥 主动领取逻辑 ---
 def claim_daily_tasks(username):
     """业务员主动点击按钮领取任务"""
     today_str = date.today().isoformat()
@@ -137,7 +136,7 @@ def get_todays_leads(username):
     today_str = date.today().isoformat()
     return supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
 
-# --- 🔥 修改：防作弊完成逻辑 ---
+# --- 🔥 防作弊完成逻辑 ---
 def mark_lead_complete_secure(lead_id):
     if not supabase: return
     now_iso = datetime.now().isoformat()
@@ -146,17 +145,12 @@ def mark_lead_complete_secure(lead_id):
         'completed_at': now_iso # 记录完成的具体时间
     }).eq('id', lead_id).execute()
 
-# --- 🔥 新增：日志统计逻辑 ---
+# --- 🔥 日志统计逻辑 ---
 def get_daily_logs(query_date):
-    """
-    获取指定日期的日志：
-    1. 领取记录 (assigned_at = date)
-    2. 处理记录 (completed_at = date)
-    """
+    """获取指定日期的领取和完成日志"""
     if not supabase: return pd.DataFrame(), pd.DataFrame()
     
     # 1. 领取榜
-    # Supabase filter syntax for date match is tricky, using simple string match for assigned_at (YYYY-MM-DD)
     raw_claims = supabase.table('leads').select('assigned_to, assigned_at').eq('assigned_at', query_date).execute().data
     df_claims = pd.DataFrame(raw_claims)
     if not df_claims.empty:
@@ -164,8 +158,7 @@ def get_daily_logs(query_date):
     else:
         df_claim_summary = pd.DataFrame(columns=['assigned_to', '领取数量'])
         
-    # 2. 处理榜
-    # completed_at 是带时分的，需要范围查询
+    # 2. 处理榜 (completed_at 是带时间的)
     start_dt = f"{query_date}T00:00:00"
     end_dt = f"{query_date}T23:59:59"
     
@@ -345,20 +338,10 @@ if selected_nav == "Workbench":
                 c1, c2 = st.columns(2)
                 
                 # --- 防作弊逻辑核心 ---
-                # 使用 session_state 记录用户是否点击了链接
                 link_key = f"clicked_{item['id']}"
                 if link_key not in st.session_state: st.session_state[link_key] = False
                 
-                # 按钮1：跳转链接 (点击后解锁右侧按钮)
                 wa_url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
-                
-                # 回调函数：记录点击状态
-                def on_link_click(lid=item['id']):
-                    st.session_state[f"clicked_{lid}"] = True
-
-                # 注意：Streamlit 的 Link Button 无法绑定回调，我们用这种方式模拟
-                # 我们展示一个链接，但是告诉用户必须点。
-                # 更好的方式：Check Button 或者先点按钮再显示链接。这里采用“先点按钮显示链接并解锁”
                 
                 if not st.session_state[link_key]:
                     if c1.button("🔗 获取 WhatsApp 链接", key=f"lk_{item['id']}"):
@@ -366,17 +349,15 @@ if selected_nav == "Workbench":
                         st.rerun()
                     c2.button("🚫 请先获取链接", disabled=True, key=f"fake_{item['id']}")
                 else:
-                    # 已解锁状态
                     c1.markdown(f"<a href='{wa_url}' target='_blank' style='display:block;text-align:center;background:#25D366;color:white;padding:10px;border-radius:4px;text-decoration:none;font-weight:bold;'>👉 点击跳转 WhatsApp</a>", unsafe_allow_html=True)
                     
                     if c2.button("✅ 标记完成", key=f"done_{item['id']}"):
                         mark_lead_complete_secure(item['id'])
-                        st.session_state.pop(link_key, None) # 清理状态
+                        st.session_state.pop(link_key, None)
                         st.rerun()
 
     with tab_done:
         done_items = [x for x in my_leads if x.get('is_contacted')]
-        # 简单显示
         if done_items:
             df_done = pd.DataFrame(done_items)
             df_done['completed_at'] = pd.to_datetime(df_done['completed_at']).dt.strftime('%H:%M')
@@ -434,7 +415,6 @@ elif selected_nav == "Team" and st.session_state['role'] == 'admin':
             st.markdown(f"### 👤 {user_info['real_name']}")
             st.info(f"Role: {user_info['role']} | Last Seen: {str(user_info.get('last_seen', 'Never'))[:16]}")
             
-            # --- 危险操作区 ---
             st.markdown("---")
             st.markdown("#### 🚨 危险操作区")
             with st.expander("🗑️ 删除账号并回收任务", expanded=False):
@@ -498,4 +478,20 @@ elif selected_nav == "Import" and st.session_state['role'] == 'admin':
                 valid_phones.extend([p for p in batch if res_map.get(p) == 'valid'])
                 time.sleep(1)
             
-            status.write(f"验证完成，有效号码 {len(valid_phones)} 个
+            status.write(f"验证完成，有效号码 {len(valid_phones)} 个，AI 生成中...")
+            
+            final_rows = []
+            bar = st.progress(0)
+            for idx, p in enumerate(valid_phones):
+                rid = row_map[p][0]
+                row = df_raw.iloc[rid]
+                msg = get_ai_message_sniper(client, row[s_col], row[l_col], "Sales Team")
+                final_rows.append({"Shop": row[s_col], "Link": row[l_col], "Phone": p, "Msg": msg})
+                
+                if len(final_rows) >= 100:
+                    admin_bulk_upload_to_pool(final_rows)
+                    final_rows = []
+                bar.progress((idx+1)/len(valid_phones))
+                
+            if final_rows: admin_bulk_upload_to_pool(final_rows)
+            status.update(label="完成入库！", state="complete")
