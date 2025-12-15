@@ -393,11 +393,11 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 UI 主题 (Stable & Beautiful)
+# 🎨 UI 主题 (Ultimate Clean & Dark)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 核心修复：时钟+CSS+JS 
+# 🔥 JS 时钟
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
@@ -405,7 +405,7 @@ st.markdown("""
     z-index: 99999; background: rgba(0,0,0,0.4); padding: 4px 16px; border-radius: 20px;
     backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1);
     box-shadow: 0 4px 6px rgba(0,0,0,0.1); pointer-events: none;
-">Initialize...</div>
+">Loading...</div>
 
 <script>
 function startClock() {
@@ -419,15 +419,13 @@ function startClock() {
         const clock = document.getElementById('clock-container');
         if (clock) { clock.innerHTML = timeString; }
     }
-    // 立即运行
     update();
-    // 循环运行
     setInterval(update, 1000);
 }
-// 确保 DOM 加载后运行
+// 防抖启动
 document.addEventListener('DOMContentLoaded', startClock);
-// 兜底策略：如果 DOMContentLoaded 错过了，强制延时启动
-setTimeout(startClock, 500);
+setTimeout(startClock, 500); 
+setTimeout(startClock, 2000);
 </script>
 
 <style>
@@ -443,25 +441,24 @@ setTimeout(startClock, 500);
         --btn-text: #ffffff;
     }
 
-    /* 1. ⚛️ 全局文字光栅化 (针对文字元素) */
-    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] {
-        background-color: transparent !important;
+    /* 1. ⚛️ 全局去黑框 */
+    * {
         text-shadow: none !important;
         -webkit-text-stroke: 0px !important;
+        box-shadow: none !important;
         -webkit-font-smoothing: antialiased !important;
     }
 
-    /* 2. 🌌 安全背景 (Base) */
-    .stApp {
+    /* 2. 🌌 强制深色背景 (修复白屏的关键) */
+    .stApp, [data-testid="stAppViewContainer"] {
         background-color: #09090b !important;
-        color: var(--text-primary);
+        background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%) !important;
+        color: var(--text-primary) !important;
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
-        position: relative;
-        background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%);
     }
     
-    /* 3. 🌠 流光动画 (Overlay) */
-    .stApp::after {
+    /* 3. 🌠 流光动画 */
+    [data-testid="stAppViewContainer"]::after {
         content: "";
         position: fixed;
         top: 0; left: 0; width: 100%; height: 100%;
@@ -469,21 +466,23 @@ setTimeout(startClock, 500);
         background-size: 200% 100%;
         animation: shimmer 8s infinite linear;
         pointer-events: none;
-        z-index: 0; /* 只要不是负数，就能看见；内容层级更高即可 */
+        z-index: 0;
     }
     
-    /* 关键：提升内容层级，防止被流光挡住 */
-    .block-container {
-        position: relative;
-        z-index: 1;
-    }
-
     @keyframes shimmer {
         0% { background-position: 200% 0; }
         100% { background-position: -200% 0; }
     }
 
-    header { visibility: hidden !important; } 
+    /* 4. 强制头部透明，防止遮挡背景 */
+    [data-testid="stHeader"] {
+        background-color: transparent !important;
+    }
+
+    /* 5. 内容文字背景透明 */
+    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] {
+        background-color: transparent !important;
+    }
 
     /* 标题 */
     .gemini-header {
