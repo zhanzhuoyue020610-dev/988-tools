@@ -35,7 +35,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑
+# ☁️ 数据库与核心逻辑 (保持不变)
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -393,7 +393,7 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 UI 主题
+# 🎨 UI 主题 (Ultimate Fix)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
@@ -425,72 +425,53 @@ st.markdown("""
         --btn-text: #ffffff;
     }
 
-    /* 1. 全局去黑框 & 字体平滑 (仅对文字生效) */
-    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] {
-        background-color: transparent !important;
+    /* 1. ⚛️ 全局去黑框 */
+    * {
         text-shadow: none !important;
         -webkit-text-stroke: 0px !important;
+        box-shadow: none !important;
         -webkit-font-smoothing: antialiased !important;
     }
 
-    /* 2. 🌌 扫光背景 (Shimmering Dark) */
+    /* 2. 🌌 安全流光背景 (background-image 方式) */
     .stApp {
-        background-color: #09090b; /* Deep base color */
-        position: relative;
-        overflow-x: hidden;
+        background-color: #09090b !important; /* 强制黑色底 */
+        background-image: linear-gradient(
+            115deg,
+            #09090b 0%,
+            #0f172a 40%,
+            #1e1b4b 50%, 
+            #0f172a 60%,
+            #09090b 100%
+        ) !important;
+        background-size: 200% 200% !important;
+        animation: flowGradient 15s ease infinite !important;
+        color: var(--text-primary);
+        font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
     }
     
-    /* 扫光动画层 */
-    .stApp::before {
-        content: "";
-        position: fixed;
-        top: 0;
-        left: -150%;
-        width: 200%;
-        height: 100%;
-        background: linear-gradient(
-            115deg,
-            transparent 40%,
-            rgba(255, 255, 255, 0.03) 45%,
-            rgba(255, 255, 255, 0.05) 50%,
-            rgba(255, 255, 255, 0.03) 55%,
-            transparent 60%
-        );
-        pointer-events: none; /* 让鼠标点击穿透 */
-        animation: shimmer 8s infinite linear;
-        z-index: 0;
+    @keyframes flowGradient {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
     }
 
-    @keyframes shimmer {
-        0% { transform: translateX(0); }
-        100% { transform: translateX(100%); }
-    }
-
-    /* 内容层级提升，确保在光束之上 */
-    .block-container {
-        position: relative;
-        z-index: 1;
+    /* 3. 文字背景透明化 */
+    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] {
+        background-color: transparent !important;
     }
 
     header { visibility: hidden !important; } 
     
-    /* 时钟样式 */
+    /* 时钟 */
     #clock-container {
-        position: fixed;
-        top: 10px;
-        left: 50%;
-        transform: translateX(-50%);
-        font-family: 'Inter', monospace;
-        font-size: 14px;
-        color: rgba(255,255,255,0.6);
-        z-index: 9999;
-        background: rgba(0,0,0,0.3);
-        padding: 4px 12px;
-        border-radius: 20px;
+        position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+        font-family: 'Inter', monospace; font-size: 14px; color: rgba(255,255,255,0.6);
+        z-index: 9999; background: rgba(0,0,0,0.3); padding: 4px 12px; border-radius: 20px;
         backdrop-filter: blur(5px);
     }
 
-    /* 标题排版 */
+    /* 标题 */
     .gemini-header {
         font-weight: 600; font-size: 28px;
         background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
@@ -498,55 +479,42 @@ st.markdown("""
     }
     .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
 
-    /* 积分胶囊 */
+    /* 积分 */
     .points-pill {
-        background-color: rgba(255, 255, 255, 0.05) !important; 
-        color: #e3e3e3; 
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace;
+        background-color: rgba(255, 255, 255, 0.05) !important; color: #e3e3e3; 
+        border: 1px solid rgba(255, 255, 255, 0.1); padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace;
     }
 
-    /* 导航栏 */
+    /* 导航 */
     div[data-testid="stRadio"] > div { background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
-    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; text-shadow: none !important; }
+    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
 
-    /* 💎 磨砂玻璃卡片 */
+    /* 容器 (磨砂) */
     div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { 
-        background-color: rgba(30, 31, 32, 0.6) !important;
-        backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
-        border-radius: 12px; 
-        padding: 15px; 
+        background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.08) !important; border-radius: 12px; padding: 15px; 
     }
     div[data-testid="stExpander"] details { border: none !important; }
     div[data-testid="stExpander"] summary { color: white !important; background-color: transparent !important; }
     div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
     
-    /* 按钮系统 */
-    button { color: var(--btn-text) !important; text-shadow: none !important; }
+    /* 按钮 */
+    button { color: var(--btn-text) !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
-        background: var(--btn-primary) !important; 
-        color: var(--btn-text) !important; 
-        border: none !important; 
-        border-radius: 50px !important; 
-        padding: 10px 24px !important; 
-        font-weight: 600; 
-        letter-spacing: 1px; 
-        transition: all 0.2s ease; 
+        background: var(--btn-primary) !important; color: var(--btn-text) !important; 
+        border: none !important; border-radius: 50px !important; padding: 10px 24px !important; 
+        font-weight: 600; letter-spacing: 1px; transition: all 0.2s ease; 
         box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2) !important;
     }
     div.stButton > button:hover, div.stFormSubmitButton > button:hover { 
-        transform: translateY(-2px); 
-        box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important;
+        transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important;
     }
 
-    /* 输入框 (磨砂深灰) */
+    /* 输入框 */
     div[data-baseweb="input"], div[data-baseweb="select"] { 
-        background-color: rgba(45, 46, 51, 0.8) !important; 
-        border: 1px solid #444 !important; 
-        border-radius: 8px !important;
-        color: white !important;
+        background-color: rgba(45, 46, 51, 0.8) !important; border: 1px solid #444 !important; 
+        border-radius: 8px !important; color: white !important;
     }
     input { color: white !important; caret-color: #6366f1; background-color: transparent !important; }
     ::placeholder { color: #5f6368 !important; }
@@ -554,7 +522,7 @@ st.markdown("""
     /* 上传 */
     [data-testid="stFileUploader"] { background-color: transparent !important; }
     [data-testid="stFileUploader"] section { background-color: rgba(45, 46, 51, 0.5) !important; border: 1px dashed #555 !important; }
-    [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; box-shadow: none !important; }
+    [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; }
     
     /* 提示条 */
     .custom-alert {
