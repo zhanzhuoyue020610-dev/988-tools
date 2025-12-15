@@ -12,7 +12,6 @@ import hashlib
 import random
 from datetime import date, datetime, timedelta
 import concurrent.futures
-import streamlit.components.v1 as components
 
 try:
     from supabase import create_client, Client
@@ -398,7 +397,7 @@ def check_api_health(cn_user, cn_key, openai_key):
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 JS 时钟 + CSS 动态背景
+# 🔥 JS 时钟
 st.markdown("""
 <script>
 function updateTime() {
@@ -420,34 +419,57 @@ st.markdown("""
     :root {
         --text-primary: #e3e3e3;
         --text-secondary: #8e8e8e;
-        --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546);
+        --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
         --btn-primary: linear-gradient(90deg, #6366f1, #818cf8);
         --btn-hover: linear-gradient(90deg, #818cf8, #a5b4fc);
         --btn-text: #ffffff;
     }
 
-    /* 1. 🌌 动态流光背景 (修复：不影响文字背景) */
-    .stApp {
-        background: linear-gradient(-45deg, #020617, #0f172a, #1e1b4b, #172554);
-        background-size: 400% 400%;
-        animation: gradientBG 20s ease infinite;
-        color: var(--text-primary);
-        font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
-    }
-    
-    @keyframes gradientBG {
-        0% { background-position: 0% 50%; }
-        50% { background-position: 100% 50%; }
-        100% { background-position: 0% 50%; }
-    }
-
-    /* 2. ⚛️ 全局文字光栅化 (修复黑框) */
-    /* 注意：只针对文字元素设置 transparent，不要设置 * */
+    /* 1. 全局去黑框 & 字体平滑 (仅对文字生效) */
     p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] {
         background-color: transparent !important;
         text-shadow: none !important;
         -webkit-text-stroke: 0px !important;
         -webkit-font-smoothing: antialiased !important;
+    }
+
+    /* 2. 🌌 扫光背景 (Shimmering Dark) */
+    .stApp {
+        background-color: #09090b; /* Deep base color */
+        position: relative;
+        overflow-x: hidden;
+    }
+    
+    /* 扫光动画层 */
+    .stApp::before {
+        content: "";
+        position: fixed;
+        top: 0;
+        left: -150%;
+        width: 200%;
+        height: 100%;
+        background: linear-gradient(
+            115deg,
+            transparent 40%,
+            rgba(255, 255, 255, 0.03) 45%,
+            rgba(255, 255, 255, 0.05) 50%,
+            rgba(255, 255, 255, 0.03) 55%,
+            transparent 60%
+        );
+        pointer-events: none; /* 让鼠标点击穿透 */
+        animation: shimmer 8s infinite linear;
+        z-index: 0;
+    }
+
+    @keyframes shimmer {
+        0% { transform: translateX(0); }
+        100% { transform: translateX(100%); }
+    }
+
+    /* 内容层级提升，确保在光束之上 */
+    .block-container {
+        position: relative;
+        z-index: 1;
     }
 
     header { visibility: hidden !important; } 
