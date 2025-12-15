@@ -397,23 +397,25 @@ def check_api_health(cn_user, cn_key, openai_key):
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 核心修复：时钟+CSS+JS 一体化注入 (Z-Index 99999 + Brute Force Update)
+# 🔥 核心修复：时钟+CSS+JS 一体化注入 (无事件依赖，强制轮询)
 st.markdown("""
 <div id="clock-container" style="
-    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-    font-family: 'Inter', monospace; font-size: 14px; color: rgba(255,255,255,0.7);
-    z-index: 999999; background: rgba(0,0,0,0.4); padding: 4px 16px; border-radius: 20px;
-    backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1);
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1); pointer-events: none;
+    position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
+    font-family: 'Inter', monospace; font-size: 15px; color: rgba(255,255,255,0.85);
+    z-index: 999999; background: rgba(0,0,0,0.5); padding: 6px 20px; border-radius: 30px;
+    backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2); pointer-events: none; letter-spacing: 1px;
+    font-weight: 500;
 ">Initialize...</div>
 
 <script>
-// 暴力时钟脚本 v91.0
+// 暴力轮询时钟 v92.0
 (function() {
     function updateClock() {
         var clock = document.getElementById('clock-container');
         if (clock) {
             var now = new Date();
+            // 格式: YYYY/MM/DD HH:mm
             var timeStr = now.getFullYear() + "/" + 
                        String(now.getMonth() + 1).padStart(2, '0') + "/" + 
                        String(now.getDate()).padStart(2, '0') + " " + 
@@ -422,8 +424,10 @@ st.markdown("""
             clock.innerHTML = timeStr;
         }
     }
-    // 每 100ms 尝试更新一次，确保哪怕 DOM 延迟也能刷出来
-    setInterval(updateClock, 100);
+    // 立即执行
+    updateClock();
+    // 每一秒都死命更新，不依赖任何加载事件
+    setInterval(updateClock, 1000);
 })();
 </script>
 
@@ -448,8 +452,7 @@ st.markdown("""
         -webkit-font-smoothing: antialiased !important;
     }
 
-    /* 2. 🌌 强制深色背景 (修复白屏的关键) */
-    /* 强制覆盖 Streamlit 的白色底板 */
+    /* 2. 🌌 强制深色背景 (穿透修复白屏) */
     .stApp, [data-testid="stAppViewContainer"] {
         background-color: #09090b !important;
         background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%) !important;
@@ -466,7 +469,7 @@ st.markdown("""
         background-size: 200% 100%;
         animation: shimmer 8s infinite linear;
         pointer-events: none;
-        z-index: 0; /* 背景层级 */
+        z-index: 0;
     }
     
     @keyframes shimmer {
