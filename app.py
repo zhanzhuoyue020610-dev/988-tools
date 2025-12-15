@@ -12,6 +12,8 @@ import hashlib
 import random
 from datetime import date, datetime, timedelta
 import concurrent.futures
+# 🔥 引入组件库，这是修复时钟的关键
+import streamlit.components.v1 as components 
 
 try:
     from supabase import create_client, Client
@@ -35,7 +37,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑
+# ☁️ 数据库与核心逻辑 (保持不变)
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -397,7 +399,32 @@ def check_api_health(cn_user, cn_key, openai_key):
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 核心修复：时钟+CSS+JS 一体化注入 (无事件依赖，强制轮询)
+# 🔥 核心修复：使用 components.html 注入 JS，彻底解决 Streamlit 不执行 Script 的问题
+# height=0 隐藏 iframe，但 JS 依然执行
+components.html("""
+    <script>
+        // 定义更新时钟的函数
+        function updateClock() {
+            var now = new Date();
+            var timeStr = now.getFullYear() + "/" + 
+                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
+                       String(now.getDate()).padStart(2, '0') + " " + 
+                       String(now.getHours()).padStart(2, '0') + ":" + 
+                       String(now.getMinutes()).padStart(2, '0');
+            
+            // 关键点：穿透 iframe，去父页面找 ID
+            var clock = window.parent.document.getElementById('clock-container');
+            if (clock) {
+                clock.innerHTML = timeStr;
+                clock.style.animation = "fadeIn 1s ease"; // 加个淡入动画证明我活着
+            }
+        }
+        // 疯狂轮询，确保父页面渲染出来后能立马找到
+        setInterval(updateClock, 100);
+    </script>
+""", height=0)
+
+# 放置时钟 HTML 占位符 (在主页面)
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -405,31 +432,8 @@ st.markdown("""
     z-index: 999999; background: rgba(0,0,0,0.5); padding: 6px 20px; border-radius: 30px;
     backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1);
     box-shadow: 0 4px 10px rgba(0,0,0,0.2); pointer-events: none; letter-spacing: 1px;
-    font-weight: 500;
+    font-weight: 500; transition: all 0.3s ease;
 ">Initialize...</div>
-
-<script>
-// 暴力轮询时钟 v92.0
-(function() {
-    function updateClock() {
-        var clock = document.getElementById('clock-container');
-        if (clock) {
-            var now = new Date();
-            // 格式: YYYY/MM/DD HH:mm
-            var timeStr = now.getFullYear() + "/" + 
-                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
-                       String(now.getDate()).padStart(2, '0') + " " + 
-                       String(now.getHours()).padStart(2, '0') + ":" + 
-                       String(now.getMinutes()).padStart(2, '0');
-            clock.innerHTML = timeStr;
-        }
-    }
-    // 立即执行
-    updateClock();
-    // 每一秒都死命更新，不依赖任何加载事件
-    setInterval(updateClock, 1000);
-})();
-</script>
 
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
