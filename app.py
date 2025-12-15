@@ -393,11 +393,11 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 UI 主题 (Ultimate Clean & Dark)
+# 🎨 UI 主题 (Stable & Beautiful)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 核心修复：时钟+CSS+JS 一体化注入，确保时序正确
+# 🔥 核心修复：时钟+CSS+JS 
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
@@ -405,26 +405,29 @@ st.markdown("""
     z-index: 99999; background: rgba(0,0,0,0.4); padding: 4px 16px; border-radius: 20px;
     backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1);
     box-shadow: 0 4px 6px rgba(0,0,0,0.1); pointer-events: none;
-">Loading...</div>
+">Initialize...</div>
 
 <script>
-function updateTime() {
-    const now = new Date();
-    const options = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false };
-    // 强制使用冒号闪烁效果
-    const timeString = now.getFullYear() + "/" + 
-                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
-                       String(now.getDate()).padStart(2, '0') + " " + 
-                       String(now.getHours()).padStart(2, '0') + ":" + 
-                       String(now.getMinutes()).padStart(2, '0');
-    
-    const clock = document.getElementById('clock-container');
-    if (clock) { clock.innerHTML = timeString; }
+function startClock() {
+    function update() {
+        const now = new Date();
+        const timeString = now.getFullYear() + "/" + 
+                           String(now.getMonth() + 1).padStart(2, '0') + "/" + 
+                           String(now.getDate()).padStart(2, '0') + " " + 
+                           String(now.getHours()).padStart(2, '0') + ":" + 
+                           String(now.getMinutes()).padStart(2, '0');
+        const clock = document.getElementById('clock-container');
+        if (clock) { clock.innerHTML = timeString; }
+    }
+    // 立即运行
+    update();
+    // 循环运行
+    setInterval(update, 1000);
 }
-// 立即执行一次
-updateTime();
-// 每秒刷新
-setInterval(updateTime, 1000);
+// 确保 DOM 加载后运行
+document.addEventListener('DOMContentLoaded', startClock);
+// 兜底策略：如果 DOMContentLoaded 错过了，强制延时启动
+setTimeout(startClock, 500);
 </script>
 
 <style>
@@ -440,47 +443,44 @@ setInterval(updateTime, 1000);
         --btn-text: #ffffff;
     }
 
-    /* 1. ⚛️ 全局去黑框 & 字体平滑 */
-    * {
+    /* 1. ⚛️ 全局文字光栅化 (针对文字元素) */
+    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] {
+        background-color: transparent !important;
         text-shadow: none !important;
         -webkit-text-stroke: 0px !important;
-        box-shadow: none !important;
         -webkit-font-smoothing: antialiased !important;
     }
 
-    /* 2. 🌌 扫光背景 (安全版：z-index: -1) */
+    /* 2. 🌌 安全背景 (Base) */
     .stApp {
         background-color: #09090b !important;
         color: var(--text-primary);
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
         position: relative;
+        background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%);
     }
     
-    .stApp::before {
+    /* 3. 🌠 流光动画 (Overlay) */
+    .stApp::after {
         content: "";
         position: fixed;
-        top: 0; left: -100%; width: 200%; height: 100%;
-        background: linear-gradient(
-            115deg,
-            transparent 40%,
-            rgba(255, 255, 255, 0.03) 45%,
-            rgba(255, 255, 255, 0.05) 50%,
-            rgba(255, 255, 255, 0.03) 55%,
-            transparent 60%
-        );
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.03) 50%, transparent 60%);
+        background-size: 200% 100%;
+        animation: shimmer 8s infinite linear;
         pointer-events: none;
-        z-index: -1; /* 关键：放在最底层，不会挡住文字 */
-        animation: shimmer 10s infinite linear;
+        z-index: 0; /* 只要不是负数，就能看见；内容层级更高即可 */
     }
     
-    @keyframes shimmer {
-        0% { transform: translateX(0); }
-        100% { transform: translateX(100%); }
+    /* 关键：提升内容层级，防止被流光挡住 */
+    .block-container {
+        position: relative;
+        z-index: 1;
     }
 
-    /* 3. 文字背景透明化 */
-    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] {
-        background-color: transparent !important;
+    @keyframes shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
     }
 
     header { visibility: hidden !important; } 
