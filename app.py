@@ -12,6 +12,7 @@ import hashlib
 import random
 from datetime import date, datetime, timedelta
 import concurrent.futures
+import streamlit.components.v1 as components
 
 try:
     from supabase import create_client, Client
@@ -393,9 +394,23 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 UI 主题 (Ultimate Clean & Dark)
+# 🎨 UI 主题
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
+
+# 🔥 JS 时钟 + CSS 动态背景
+st.markdown("""
+<script>
+function updateTime() {
+    const now = new Date();
+    const options = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    const timeString = now.toLocaleString('zh-CN', options);
+    const clock = document.getElementById('clock-container');
+    if (clock) { clock.innerHTML = timeString; }
+}
+setInterval(updateTime, 1000);
+</script>
+""", unsafe_allow_html=True)
 
 st.markdown("""
 <style>
@@ -403,40 +418,57 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
 
     :root {
-        --bg-color: #131314;           
-        --surface-color: #1e1f20;      
-        --input-bg: #282a2c;           
-        --text-primary: #e3e3e3;       
-        --text-secondary: #8e8e8e;     
-        --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
+        --text-primary: #e3e3e3;
+        --text-secondary: #8e8e8e;
+        --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546);
         --btn-primary: linear-gradient(90deg, #6366f1, #818cf8);
         --btn-hover: linear-gradient(90deg, #818cf8, #a5b4fc);
-        --btn-text: #ffffff;           
+        --btn-text: #ffffff;
     }
 
-    /* 1. ⚛️ 核心修复：文字背景完全透明，防止黑框 */
-    * {
-        text-shadow: none !important;
-        -webkit-text-stroke: 0px !important;
-        box-shadow: none !important;
-        -webkit-font-smoothing: antialiased !important;
-    }
-    
-    /* 2. 只有底板才有颜色，文字没有颜色 */
+    /* 1. 🌌 动态流光背景 (修复：不影响文字背景) */
     .stApp {
-        background-color: var(--bg-color);
+        background: linear-gradient(-45deg, #020617, #0f172a, #1e1b4b, #172554);
+        background-size: 400% 400%;
+        animation: gradientBG 20s ease infinite;
         color: var(--text-primary);
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
     }
     
-    /* 强制所有文字元素的背景色为透明 */
-    p, h1, h2, h3, h4, h5, h6, span, label, div {
-        background-color: transparent !important;
+    @keyframes gradientBG {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
     }
-    
+
+    /* 2. ⚛️ 全局文字光栅化 (修复黑框) */
+    /* 注意：只针对文字元素设置 transparent，不要设置 * */
+    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] {
+        background-color: transparent !important;
+        text-shadow: none !important;
+        -webkit-text-stroke: 0px !important;
+        -webkit-font-smoothing: antialiased !important;
+    }
+
     header { visibility: hidden !important; } 
     
-    /* 标题 */
+    /* 时钟样式 */
+    #clock-container {
+        position: fixed;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-family: 'Inter', monospace;
+        font-size: 14px;
+        color: rgba(255,255,255,0.6);
+        z-index: 9999;
+        background: rgba(0,0,0,0.3);
+        padding: 4px 12px;
+        border-radius: 20px;
+        backdrop-filter: blur(5px);
+    }
+
+    /* 标题排版 */
     .gemini-header {
         font-weight: 600; font-size: 28px;
         background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
@@ -444,7 +476,7 @@ st.markdown("""
     }
     .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
 
-    /* 积分 */
+    /* 积分胶囊 */
     .points-pill {
         background-color: rgba(255, 255, 255, 0.05) !important; 
         color: #e3e3e3; 
@@ -452,15 +484,16 @@ st.markdown("""
         padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace;
     }
 
-    /* 导航 */
-    div[data-testid="stRadio"] > div { background-color: var(--surface-color) !important; border: none; padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
-    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
+    /* 导航栏 */
+    div[data-testid="stRadio"] > div { background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
+    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; text-shadow: none !important; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
 
-    /* 容器 */
+    /* 💎 磨砂玻璃卡片 */
     div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { 
-        background-color: var(--surface-color) !important; 
-        border: 1px solid #333 !important; 
+        background-color: rgba(30, 31, 32, 0.6) !important;
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
         border-radius: 12px; 
         padding: 15px; 
     }
@@ -468,8 +501,8 @@ st.markdown("""
     div[data-testid="stExpander"] summary { color: white !important; background-color: transparent !important; }
     div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
     
-    /* 按钮 */
-    button { color: var(--btn-text) !important; }
+    /* 按钮系统 */
+    button { color: var(--btn-text) !important; text-shadow: none !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
         background: var(--btn-primary) !important; 
         color: var(--btn-text) !important; 
@@ -486,9 +519,9 @@ st.markdown("""
         box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important;
     }
 
-    /* 输入框 */
+    /* 输入框 (磨砂深灰) */
     div[data-baseweb="input"], div[data-baseweb="select"] { 
-        background-color: var(--input-bg) !important; 
+        background-color: rgba(45, 46, 51, 0.8) !important; 
         border: 1px solid #444 !important; 
         border-radius: 8px !important;
         color: white !important;
@@ -498,28 +531,30 @@ st.markdown("""
     
     /* 上传 */
     [data-testid="stFileUploader"] { background-color: transparent !important; }
-    [data-testid="stFileUploader"] section { background-color: var(--input-bg) !important; border: 1px dashed #555 !important; }
+    [data-testid="stFileUploader"] section { background-color: rgba(45, 46, 51, 0.5) !important; border: 1px dashed #555 !important; }
     [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; box-shadow: none !important; }
     
     /* 提示条 */
     .custom-alert {
         padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; color: #e3e3e3; display: flex; align-items: center;
-        background-color: rgba(255, 255, 255, 0.05); border: 1px solid #444; /* 默认通用 */
+        background-color: rgba(255, 255, 255, 0.05); border: 1px solid #444;
     }
     .alert-error { background-color: rgba(255, 85, 70, 0.15) !important; border-color: #ff5f56 !important; color: #ff5f56 !important; }
     .alert-success { background-color: rgba(63, 185, 80, 0.15) !important; border-color: #3fb950 !important; color: #3fb950 !important; }
     .alert-info { background-color: rgba(56, 139, 253, 0.15) !important; border-color: #58a6ff !important; color: #58a6ff !important; }
 
     /* 表格 */
-    div[data-testid="stDataFrame"] div[role="grid"] { background-color: var(--surface-color) !important; color: var(--text-secondary); }
+    div[data-testid="stDataFrame"] div[role="grid"] { background-color: rgba(30, 31, 32, 0.6) !important; color: var(--text-secondary); }
     .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
     
     h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
-    p, span, div, label { color: #c4c7c5 !important; }
     .stCaption { color: #8e8e8e !important; }
 
 </style>
 """, unsafe_allow_html=True)
+
+# 时钟占位符
+st.markdown('<div id="clock-container">Loading...</div>', unsafe_allow_html=True)
 
 # ==========================================
 # 🔐 登录页
@@ -597,7 +632,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 # --- 🖥️ SYSTEM MONITOR (Admin) ---
 if selected_nav == "System" and st.session_state['role'] == 'admin':
     
-    with st.expander("🔑 API Key 调试器", expanded=False):
+    with st.expander("API Key 调试器", expanded=False):
         st.write("如报错请在 Secrets 更新 Key 并重启")
         st.code(f"Model: {CONFIG['AI_MODEL']}", language="text")
         st.code(f"Key (Last 5): {OPENAI_KEY[-5:] if OPENAI_KEY else 'N/A'}", language="text")
@@ -618,7 +653,7 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
     def status_pill(title, is_active, detail):
         dot = "dot-green" if is_active else "dot-red"
         text = "运行正常" if is_active else "连接异常"
-        st.markdown(f"""<div style="background-color:#1e1f20; padding:20px; border-radius:16px;"><div style="font-size:14px; color:#c4c7c5;">{title}</div><div style="margin-top:10px; font-size:16px; color:white; font-weight:500;"><span class="status-dot {dot}"></span>{text}</div><div style="font-size:12px; color:#8e8e8e; margin-top:5px;">{detail}</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div style="background-color:rgba(30, 31, 32, 0.6); backdrop-filter:blur(10px); padding:20px; border-radius:16px;"><div style="font-size:14px; color:#c4c7c5;">{title}</div><div style="margin-top:10px; font-size:16px; color:white; font-weight:500;"><span class="status-dot {dot}"></span>{text}</div><div style="font-size:12px; color:#8e8e8e; margin-top:5px;">{detail}</div></div>""", unsafe_allow_html=True)
 
     with k1: status_pill("云数据库", health['supabase'], "Supabase")
     with k2: status_pill("验证接口", health['checknumber'], "CheckNumber")
