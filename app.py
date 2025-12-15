@@ -393,7 +393,7 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 UI 主题
+# 🎨 UI 主题 (Ultimate Clean & Dark)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
@@ -414,27 +414,29 @@ st.markdown("""
         --btn-text: #ffffff;           
     }
 
-    /* 1. ⚛️ 全局去黑框 & 字体平滑 */
+    /* 1. ⚛️ 核心修复：文字背景完全透明，防止黑框 */
     * {
-        text-shadow: 0 0 0 transparent !important;
+        text-shadow: none !important;
         -webkit-text-stroke: 0px !important;
         box-shadow: none !important;
         -webkit-font-smoothing: antialiased !important;
-        -moz-osx-font-smoothing: grayscale !important;
-        text-rendering: geometricPrecision !important;
     }
-
-    /* 2. 基础重置 */
-    .stApp, div, section, header, footer, button, input, label, p, h1, h2, h3, h4, h5, h6 {
+    
+    /* 2. 只有底板才有颜色，文字没有颜色 */
+    .stApp {
         background-color: var(--bg-color);
         color: var(--text-primary);
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
-        text-shadow: none !important;
+    }
+    
+    /* 强制所有文字元素的背景色为透明 */
+    p, h1, h2, h3, h4, h5, h6, span, label, div {
+        background-color: transparent !important;
     }
     
     header { visibility: hidden !important; } 
     
-    /* 标题排版 */
+    /* 标题 */
     .gemini-header {
         font-weight: 600; font-size: 28px;
         background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
@@ -442,7 +444,7 @@ st.markdown("""
     }
     .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
 
-    /* 积分胶囊 */
+    /* 积分 */
     .points-pill {
         background-color: rgba(255, 255, 255, 0.05) !important; 
         color: #e3e3e3; 
@@ -450,9 +452,9 @@ st.markdown("""
         padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace;
     }
 
-    /* 导航栏 */
+    /* 导航 */
     div[data-testid="stRadio"] > div { background-color: var(--surface-color) !important; border: none; padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
-    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; text-shadow: none !important; }
+    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
 
     /* 容器 */
@@ -466,8 +468,8 @@ st.markdown("""
     div[data-testid="stExpander"] summary { color: white !important; background-color: transparent !important; }
     div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
     
-    /* 按钮系统 */
-    button { color: var(--btn-text) !important; text-shadow: none !important; }
+    /* 按钮 */
+    button { color: var(--btn-text) !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
         background: var(--btn-primary) !important; 
         color: var(--btn-text) !important; 
@@ -494,33 +496,23 @@ st.markdown("""
     input { color: white !important; caret-color: #6366f1; background-color: transparent !important; }
     ::placeholder { color: #5f6368 !important; }
     
-    /* 文件上传 */
+    /* 上传 */
     [data-testid="stFileUploader"] { background-color: transparent !important; }
     [data-testid="stFileUploader"] section { background-color: var(--input-bg) !important; border: 1px dashed #555 !important; }
     [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; box-shadow: none !important; }
     
-    /* 自定义提示条 */
+    /* 提示条 */
     .custom-alert {
-        padding: 12px 16px;
-        border-radius: 8px;
-        font-size: 14px;
-        margin-bottom: 12px;
-        color: #e3e3e3;
-        display: flex;
-        align-items: center;
-        text-shadow: none !important;
+        padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; color: #e3e3e3; display: flex; align-items: center;
+        background-color: rgba(255, 255, 255, 0.05); border: 1px solid #444; /* 默认通用 */
     }
-    .alert-error { background-color: rgba(255, 85, 70, 0.15); border: 1px solid #ff5546; color: #ff5f56; }
-    .alert-success { background-color: rgba(63, 185, 80, 0.15); border: 1px solid #3fb950; color: #3fb950; }
-    .alert-info { background-color: rgba(56, 139, 253, 0.15); border: 1px solid #58a6ff; color: #58a6ff; }
+    .alert-error { background-color: rgba(255, 85, 70, 0.15) !important; border-color: #ff5f56 !important; color: #ff5f56 !important; }
+    .alert-success { background-color: rgba(63, 185, 80, 0.15) !important; border-color: #3fb950 !important; color: #3fb950 !important; }
+    .alert-info { background-color: rgba(56, 139, 253, 0.15) !important; border-color: #58a6ff !important; color: #58a6ff !important; }
 
     /* 表格 */
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: var(--surface-color) !important; color: var(--text-secondary); }
     .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
-    
-    .status-dot { height: 6px; width: 6px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle;}
-    .dot-green { background-color: #6dd58c; }
-    .dot-red { background-color: #ff5f56; }
     
     h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
     p, span, div, label { color: #c4c7c5 !important; }
