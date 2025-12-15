@@ -35,7 +35,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑 (保持不变)
+# ☁️ 数据库与核心逻辑
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -393,25 +393,40 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 UI 主题 (Ultimate Fix)
+# 🎨 UI 主题 (Ultimate Clean & Dark)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 JS 时钟
+# 🔥 核心修复：时钟+CSS+JS 一体化注入，确保时序正确
 st.markdown("""
+<div id="clock-container" style="
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    font-family: 'Inter', monospace; font-size: 14px; color: rgba(255,255,255,0.7);
+    z-index: 99999; background: rgba(0,0,0,0.4); padding: 4px 16px; border-radius: 20px;
+    backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1); pointer-events: none;
+">Loading...</div>
+
 <script>
 function updateTime() {
     const now = new Date();
-    const options = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-    const timeString = now.toLocaleString('zh-CN', options);
+    const options = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false };
+    // 强制使用冒号闪烁效果
+    const timeString = now.getFullYear() + "/" + 
+                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
+                       String(now.getDate()).padStart(2, '0') + " " + 
+                       String(now.getHours()).padStart(2, '0') + ":" + 
+                       String(now.getMinutes()).padStart(2, '0');
+    
     const clock = document.getElementById('clock-container');
     if (clock) { clock.innerHTML = timeString; }
 }
+// 立即执行一次
+updateTime();
+// 每秒刷新
 setInterval(updateTime, 1000);
 </script>
-""", unsafe_allow_html=True)
 
-st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
@@ -425,7 +440,7 @@ st.markdown("""
         --btn-text: #ffffff;
     }
 
-    /* 1. ⚛️ 全局去黑框 */
+    /* 1. ⚛️ 全局去黑框 & 字体平滑 */
     * {
         text-shadow: none !important;
         -webkit-text-stroke: 0px !important;
@@ -433,27 +448,34 @@ st.markdown("""
         -webkit-font-smoothing: antialiased !important;
     }
 
-    /* 2. 🌌 安全流光背景 (background-image 方式) */
+    /* 2. 🌌 扫光背景 (安全版：z-index: -1) */
     .stApp {
-        background-color: #09090b !important; /* 强制黑色底 */
-        background-image: linear-gradient(
-            115deg,
-            #09090b 0%,
-            #0f172a 40%,
-            #1e1b4b 50%, 
-            #0f172a 60%,
-            #09090b 100%
-        ) !important;
-        background-size: 200% 200% !important;
-        animation: flowGradient 15s ease infinite !important;
+        background-color: #09090b !important;
         color: var(--text-primary);
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
+        position: relative;
     }
     
-    @keyframes flowGradient {
-        0% { background-position: 0% 50%; }
-        50% { background-position: 100% 50%; }
-        100% { background-position: 0% 50%; }
+    .stApp::before {
+        content: "";
+        position: fixed;
+        top: 0; left: -100%; width: 200%; height: 100%;
+        background: linear-gradient(
+            115deg,
+            transparent 40%,
+            rgba(255, 255, 255, 0.03) 45%,
+            rgba(255, 255, 255, 0.05) 50%,
+            rgba(255, 255, 255, 0.03) 55%,
+            transparent 60%
+        );
+        pointer-events: none;
+        z-index: -1; /* 关键：放在最底层，不会挡住文字 */
+        animation: shimmer 10s infinite linear;
+    }
+    
+    @keyframes shimmer {
+        0% { transform: translateX(0); }
+        100% { transform: translateX(100%); }
     }
 
     /* 3. 文字背景透明化 */
@@ -462,14 +484,6 @@ st.markdown("""
     }
 
     header { visibility: hidden !important; } 
-    
-    /* 时钟 */
-    #clock-container {
-        position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
-        font-family: 'Inter', monospace; font-size: 14px; color: rgba(255,255,255,0.6);
-        z-index: 9999; background: rgba(0,0,0,0.3); padding: 4px 12px; border-radius: 20px;
-        backdrop-filter: blur(5px);
-    }
 
     /* 标题 */
     .gemini-header {
@@ -542,9 +556,6 @@ st.markdown("""
 
 </style>
 """, unsafe_allow_html=True)
-
-# 时钟占位符
-st.markdown('<div id="clock-container">Loading...</div>', unsafe_allow_html=True)
 
 # ==========================================
 # 🔐 登录页
