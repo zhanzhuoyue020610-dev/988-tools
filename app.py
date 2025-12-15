@@ -28,8 +28,8 @@ CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
     "DAILY_QUOTA": 25,
     "LOW_STOCK_THRESHOLD": 300,
-    "POINTS_PER_TASK": 10,       # WhatsApp 新客积分
-    "POINTS_WECHAT_TASK": 5,     # 微信维护积分
+    "POINTS_PER_TASK": 10,
+    "POINTS_WECHAT_TASK": 5,
     "MAX_RETRIES": 3,
     "AI_MODEL": "gpt-4o-mini"
 }
@@ -81,7 +81,6 @@ def update_user_profile(old_username, new_username, new_password=None, new_realn
             update_data['username'] = new_username
             supabase.table('users').update(update_data).eq('username', old_username).execute()
             supabase.table('leads').update({'assigned_to': new_username}).eq('assigned_to', old_username).execute()
-            # 同时迁移微信客户
             supabase.table('wechat_customers').update({'assigned_to': new_username}).eq('assigned_to', old_username).execute()
         else:
             supabase.table('users').update(update_data).eq('username', old_username).execute()
@@ -103,13 +102,13 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 AI 生成逻辑 ---
+# --- AI Logic ---
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
         local_quotes = ["心有繁星，沐光而行。", "坚持是另一种形式的天赋。", "沉稳是职场最高级的修养。", "每一步都算数。", "保持专注，未来可期。"]
         try:
             if not client: raise Exception("No Client")
-            prompt = "你是专业的职场心理咨询师。请生成一句温暖、治愈的中文短句，不超过25字。不要带引号。"
+            prompt = "你是专业的职场心理咨询师。请生成一句温暖、治愈的中文短句，不超过25字。不要带引号，不要使用任何表情符号。"
             res = client.chat.completions.create(
                 model=CONFIG["AI_MODEL"], messages=[{"role":"user","content":prompt}], temperature=0.9, max_tokens=60
             )
@@ -119,7 +118,6 @@ def get_daily_motivation(client):
     return st.session_state["motivation_quote"]
 
 def get_ai_message_sniper(client, shop, link, rep_name):
-    # WA 新客开发文案
     offline_template = f"Здравствуйте! Заметили ваш магазин {shop} на Ozon. {rep_name} из 988 Group на связи. Мы занимаемся поставками из Китая. Можем рассчитать логистику?"
     if not shop or str(shop).lower() in ['nan', 'none', '']: return "数据缺失"
     prompt = f"""
@@ -128,7 +126,7 @@ def get_ai_message_sniper(client, shop, link, rep_name):
     Task: Write a Russian WhatsApp intro (under 50 words).
     RULES:
     1. Introduce yourself exactly as: "{rep_name} (988 Group)".
-    2. NO placeholders like [Name].
+    2. NO placeholders like [Name]. NO Emojis.
     3. Mention sourcing + logistics benefits.
     4. Ask if they want a calculation.
     """
@@ -141,24 +139,15 @@ def get_ai_message_sniper(client, shop, link, rep_name):
     except: return offline_template
 
 def get_wechat_maintenance_script(client, customer_code, rep_name):
-    """
-    🔥 微信老客维护文案生成器
-    """
-    # 离线兜底
     offline = f"您好，我是 988 Group 的 {rep_name}。最近生意如何？工厂那边出了一些新品，如果您需要补货或者看新款，随时联系我。"
-    
     prompt = f"""
-    Role: Key Account Manager '{rep_name}' at 988 Group (Logistics & Trading).
+    Role: Key Account Manager '{rep_name}' at 988 Group.
     Target: Existing Customer '{customer_code}' on WeChat.
     Task: Write a short, warm, Chinese maintenance message.
-    Context: Weekly check-in.
-    
     RULES:
-    1. Tone: Casual but professional, like an old friend.
-    2. Content: Ask about their recent sales/stock, or mention shipping speeds are good now.
-    3. NO placeholders.
-    4. Keep it under 50 words.
-    5. Don't be too pushy.
+    1. Tone: Professional and warm.
+    2. NO placeholders. NO Emojis.
+    3. Keep it under 50 words.
     """
     try:
         if not client: return offline
@@ -173,19 +162,16 @@ def generate_and_update_task(lead, client, rep_name):
         return True
     except: return False
 
-# --- 微信 SCRM 逻辑 ---
+# --- WeChat Logic ---
 def get_wechat_tasks(username):
-    """获取今日需要维护的微信客户"""
     if not supabase: return []
     today = date.today().isoformat()
-    # 逻辑：分配给人 + 下次联系时间 <= 今天
     try:
         res = supabase.table('wechat_customers').select("*").eq('assigned_to', username).lte('next_contact_date', today).execute()
         return res.data
     except: return []
 
 def complete_wechat_task(task_id, cycle_days, username):
-    """完成微信任务：更新时间，加分"""
     if not supabase: return
     today = date.today()
     next_date = (today + timedelta(days=cycle_days)).isoformat()
@@ -202,23 +188,15 @@ def admin_import_wechat_customers(df_raw):
     try:
         rows = []
         for _, row in df_raw.iterrows():
-            # 假设 Excel 列名：客户编号, 业务员, 周期
             code = str(row.get('客户编号', 'Unknown'))
-            user = str(row.get('业务员', 'admin')) # 默认给admin，需手动改
+            user = str(row.get('业务员', 'admin'))
             cycle = int(row.get('周期', 7))
-            
-            rows.append({
-                "customer_code": code,
-                "assigned_to": user,
-                "cycle_days": cycle,
-                "next_contact_date": date.today().isoformat() # 导入即需联系
-            })
-        if rows:
-            supabase.table('wechat_customers').insert(rows).execute()
+            rows.append({"customer_code": code, "assigned_to": user, "cycle_days": cycle, "next_contact_date": date.today().isoformat()})
+        if rows: supabase.table('wechat_customers').insert(rows).execute()
         return True
     except: return False
 
-# --- WA 数据查询 ---
+# --- WA Logic ---
 def get_user_daily_performance(username):
     if not supabase: return pd.DataFrame()
     try:
@@ -283,8 +261,7 @@ def admin_bulk_upload_to_pool(leads_data):
         for item in leads_data:
             rows.append({
                 "shop_name": item['Shop'], "shop_link": item['Link'], "phone": item['Phone'], 
-                "ai_message": None, 
-                "is_valid": True, "assigned_to": None, "assigned_at": None, "is_contacted": False,
+                "ai_message": None, "is_valid": True, "assigned_to": None, "assigned_at": None, "is_contacted": False,
                 "retry_count": 0, "is_frozen": False, "error_log": None
             })
         chunk_size = 500
@@ -311,7 +288,7 @@ def claim_daily_tasks(username, client):
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
                 futures = [executor.submit(generate_and_update_task, task, client, username) for task in fresh_tasks]
                 concurrent.futures.wait(futures)
-            status.update(label="文案生成完毕！", state="complete")
+            status.update(label="文案生成完毕", state="complete")
         
         final_list = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
         return final_list, "claimed"
@@ -416,9 +393,9 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 UI 主题 (Ultimate Clean & Dark)
+# 🎨 UI 主题
 # ==========================================
-st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="⚫")
+st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
 st.markdown("""
 <style>
@@ -437,15 +414,18 @@ st.markdown("""
         --btn-text: #ffffff;           
     }
 
-    /* 1. ⚛️ 核心修复：文字背景全部透明化 (去除黑框的根本) */
-    p, h1, h2, h3, h4, h5, h6, span, label, div {
-        background-color: transparent !important;
-        text-shadow: none !important;
-        -webkit-text-stroke: 0 !important;
+    /* 1. ⚛️ 全局去黑框 & 字体平滑 */
+    * {
+        text-shadow: 0 0 0 transparent !important;
+        -webkit-text-stroke: 0px !important;
+        box-shadow: none !important;
+        -webkit-font-smoothing: antialiased !important;
+        -moz-osx-font-smoothing: grayscale !important;
+        text-rendering: geometricPrecision !important;
     }
 
     /* 2. 基础重置 */
-    .stApp, div, section, header, footer, button, input, label, p, h1, h2, h3 {
+    .stApp, div, section, header, footer, button, input, label, p, h1, h2, h3, h4, h5, h6 {
         background-color: var(--bg-color);
         color: var(--text-primary);
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
@@ -483,9 +463,10 @@ st.markdown("""
         padding: 15px; 
     }
     div[data-testid="stExpander"] details { border: none !important; }
-    div[data-testid="stExpander"] summary { color: white !important; background-color: transparent !important;}
+    div[data-testid="stExpander"] summary { color: white !important; background-color: transparent !important; }
+    div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
     
-    /* 按钮系统 - 星云紫 */
+    /* 按钮系统 */
     button { color: var(--btn-text) !important; text-shadow: none !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
         background: var(--btn-primary) !important; 
@@ -518,19 +499,28 @@ st.markdown("""
     [data-testid="stFileUploader"] section { background-color: var(--input-bg) !important; border: 1px dashed #555 !important; }
     [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; box-shadow: none !important; }
     
-    /* 告急提醒 */
-    .error-alert-box { 
-        background-color: rgba(255, 95, 86, 0.15) !important; 
-        border: 1px solid #ff5f56; 
-        color: #ff5f56; 
-        padding: 15px; 
-        border-radius: 8px; 
-        margin-bottom: 20px; 
+    /* 自定义提示条 */
+    .custom-alert {
+        padding: 12px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        margin-bottom: 12px;
+        color: #e3e3e3;
+        display: flex;
+        align-items: center;
+        text-shadow: none !important;
     }
+    .alert-error { background-color: rgba(255, 85, 70, 0.15); border: 1px solid #ff5546; color: #ff5f56; }
+    .alert-success { background-color: rgba(63, 185, 80, 0.15); border: 1px solid #3fb950; color: #3fb950; }
+    .alert-info { background-color: rgba(56, 139, 253, 0.15); border: 1px solid #58a6ff; color: #58a6ff; }
 
     /* 表格 */
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: var(--surface-color) !important; color: var(--text-secondary); }
     .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
+    
+    .status-dot { height: 6px; width: 6px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle;}
+    .dot-green { background-color: #6dd58c; }
+    .dot-red { background-color: #ff5f56; }
     
     h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
     p, span, div, label { color: #c4c7c5 !important; }
@@ -560,7 +550,8 @@ if not st.session_state['logged_in']:
                 if user:
                     st.session_state.update({'logged_in':True, 'username':u, 'role':user['role'], 'real_name':user['real_name']})
                     st.rerun()
-                else: st.error("账号或密码错误")
+                else:
+                    st.markdown('<div class="custom-alert alert-error">账号或密码错误</div>', unsafe_allow_html=True)
     st.stop()
 
 # ==========================================
@@ -614,22 +605,17 @@ st.markdown("<br>", unsafe_allow_html=True)
 # --- 🖥️ SYSTEM MONITOR (Admin) ---
 if selected_nav == "System" and st.session_state['role'] == 'admin':
     
-    with st.expander("🔑 API Key 调试器 (仅管理员可见)", expanded=False):
-        st.write("如果下方显示错误，请去 Streamlit 后台 Secrets 更新 Key，并点击 Manage app -> Reboot 重启应用。")
-        st.code(f"当前使用的模型: {CONFIG['AI_MODEL']}", language="text")
-        st.code(f"当前 Key 后 5 位: {OPENAI_KEY[-5:] if OPENAI_KEY else '未读取到'}", language="text")
+    with st.expander("🔑 API Key 调试器", expanded=False):
+        st.write("如报错请在 Secrets 更新 Key 并重启")
+        st.code(f"Model: {CONFIG['AI_MODEL']}", language="text")
+        st.code(f"Key (Last 5): {OPENAI_KEY[-5:] if OPENAI_KEY else 'N/A'}", language="text")
         
     frozen_count, frozen_leads = get_frozen_leads_count()
     if frozen_count > 0:
-        st.markdown(f"""
-        <div class="error-alert-box">
-            🚨 <b>系统警报：有 {frozen_count} 个任务因连续重试 3 次失败而被冻结！</b><br>
-            建议操作：1. 检查 API 状态；2. 查看下方具体错误日志。
-        </div>
-        """, unsafe_allow_html=True)
-        with st.expander(f"查看冻结任务详情", expanded=True):
+        st.markdown(f"""<div class="custom-alert alert-error">警告：有 {frozen_count} 个任务被冻结</div>""", unsafe_allow_html=True)
+        with st.expander(f"查看冻结详情", expanded=True):
             st.dataframe(pd.DataFrame(frozen_leads))
-            if st.button("清除所有冻结任务"):
+            if st.button("清除所有冻结"):
                 supabase.table('leads').delete().eq('is_frozen', True).execute()
                 st.success("已清除"); time.sleep(1); st.rerun()
 
@@ -642,16 +628,16 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
         text = "运行正常" if is_active else "连接异常"
         st.markdown(f"""<div style="background-color:#1e1f20; padding:20px; border-radius:16px;"><div style="font-size:14px; color:#c4c7c5;">{title}</div><div style="margin-top:10px; font-size:16px; color:white; font-weight:500;"><span class="status-dot {dot}"></span>{text}</div><div style="font-size:12px; color:#8e8e8e; margin-top:5px;">{detail}</div></div>""", unsafe_allow_html=True)
 
-    with k1: status_pill("云数据库", health['supabase'], "Supabase PostgreSQL")
-    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber API")
+    with k1: status_pill("云数据库", health['supabase'], "Supabase")
+    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber")
     with k3: status_pill("AI 引擎", health['openai'], f"OpenAI ({CONFIG['AI_MODEL']})")
     
     if health['msg']:
-        st.error(f"诊断报告: {'; '.join(health['msg'])}")
+        st.markdown(f"""<div class="custom-alert alert-error">诊断报告: {'; '.join(health['msg'])}</div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("#### 沙盒模拟测试")
-    sb_file = st.file_uploader("上传测试文件 (CSV/Excel)", type=['csv', 'xlsx'])
+    st.markdown("#### 沙盒模拟")
+    sb_file = st.file_uploader("上传测试文件", type=['csv', 'xlsx'])
     if sb_file and st.button("开始模拟"):
         try:
             if sb_file.name.endswith('.csv'): df = pd.read_csv(sb_file)
@@ -663,49 +649,42 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
                 s.write(f"提取结果: {nums}"); res = process_checknumber_task(nums, CN_KEY, CN_USER)
                 valid = [p for p in nums if res.get(p)=='valid']; s.write(f"有效号码: {valid}")
                 if valid:
-                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员")
+                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试", "http://test.com", "管理员")
                     s.write(f"生成结果: {msg}")
                 s.update(label="模拟完成", state="complete")
         except Exception as e: st.error(str(e))
 
-# --- 📱 WECHAT SCRM (New Module) ---
+# --- 📱 WECHAT SCRM ---
 elif selected_nav == "WeChat":
     if st.session_state['role'] == 'admin':
-        st.markdown("#### 微信客户管理 (Admin)")
-        
-        # 批量导入
-        with st.expander("📥 导入微信客户", expanded=True):
-            st.caption("Excel格式：客户编号 | 业务员用户名 | 维护周期(天)")
+        st.markdown("#### 微信客户管理")
+        with st.expander("导入微信客户", expanded=True):
+            st.caption("格式：客户编号 | 业务员 | 周期")
             wc_file = st.file_uploader("上传 Excel", type=['xlsx', 'csv'], key="wc_up")
             if wc_file and st.button("开始导入"):
                 try:
                     df = pd.read_csv(wc_file) if wc_file.name.endswith('.csv') else pd.read_excel(wc_file)
                     if admin_import_wechat_customers(df):
-                        st.success(f"成功导入 {len(df)} 个客户！")
-                    else: st.error("导入失败，请检查格式")
+                        st.markdown(f"""<div class="custom-alert alert-success">成功导入 {len(df)} 个客户</div>""", unsafe_allow_html=True)
+                    else: st.markdown("""<div class="custom-alert alert-error">导入失败</div>""", unsafe_allow_html=True)
                 except Exception as e: st.error(str(e))
-                
     else:
-        st.markdown("#### 💬 微信维护助手")
+        st.markdown("#### 微信维护助手")
         wc_tasks = get_wechat_tasks(st.session_state['username'])
-        
         if not wc_tasks:
-            st.info("🎉 今日无维护任务，去 WhatsApp 开发新客户吧！")
+            st.markdown("""<div class="custom-alert alert-info">今日无维护任务</div>""", unsafe_allow_html=True)
         else:
             st.markdown(f"**今日需维护：{len(wc_tasks)} 人**")
             for task in wc_tasks:
                 with st.expander(f"客户编号：{task['customer_code']}", expanded=True):
-                    # 动态生成文案
                     script = get_wechat_maintenance_script(client, task['customer_code'], st.session_state['username'])
                     st.code(script, language="text")
-                    
                     c1, c2 = st.columns([3, 1])
-                    with c1:
-                        st.caption(f"上次联系：{task['last_contact_date']} | 周期：{task['cycle_days']}天")
+                    with c1: st.caption(f"上次联系：{task['last_contact_date']}")
                     with c2:
-                        if st.button("✅ 完成打卡", key=f"wc_done_{task['id']}"):
+                        if st.button("完成打卡", key=f"wc_done_{task['id']}"):
                             complete_wechat_task(task['id'], task['cycle_days'], st.session_state['username'])
-                            st.toast(f"维护完成！积分 +{CONFIG['POINTS_WECHAT_TASK']}")
+                            st.toast(f"积分 +{CONFIG['POINTS_WECHAT_TASK']}")
                             time.sleep(1); st.rerun()
 
 # --- 💼 WORKBENCH (Sales) ---
@@ -720,11 +699,11 @@ elif selected_nav == "Workbench":
     with c_action:
         st.markdown("<br>", unsafe_allow_html=True)
         if curr < total:
-            if st.button(f"领取任务 (剩余 {total-curr} 个)"):
+            if st.button(f"领取任务 (余 {total-curr})"):
                 _, status = claim_daily_tasks(st.session_state['username'], client)
-                if status=="empty": st.error("公池已空，请联系管理员")
+                if status=="empty": st.markdown("""<div class="custom-alert alert-error">公池已空</div>""", unsafe_allow_html=True)
                 else: st.rerun()
-        else: st.success("今日已领满")
+        else: st.markdown("""<div class="custom-alert alert-success">今日已领满</div>""", unsafe_allow_html=True)
 
     st.markdown("#### 任务列表")
     tabs = st.tabs(["待跟进", "已完成"])
@@ -734,7 +713,7 @@ elif selected_nav == "Workbench":
         for item in todos:
             with st.expander(f"{item['shop_name']}", expanded=True):
                 if not item['ai_message']:
-                    st.warning("⚠️ 文案生成中，请稍后刷新...")
+                    st.markdown("""<div class="custom-alert alert-info">文案生成中...</div>""", unsafe_allow_html=True)
                 else:
                     st.write(item['ai_message'])
                     c1, c2 = st.columns(2)
@@ -826,7 +805,7 @@ elif selected_nav == "Team":
 # --- 📥 IMPORT (Admin) ---
 elif selected_nav == "Import":
     pool = get_public_pool_count()
-    if pool < CONFIG["LOW_STOCK_THRESHOLD"]: st.markdown(f"""<div class="error-alert-box">🚨 <b>库存告急</b><br>仅剩 {pool} 个客户，请尽快进货。</div>""", unsafe_allow_html=True)
+    if pool < CONFIG["LOW_STOCK_THRESHOLD"]: st.markdown(f"""<div class="custom-alert alert-error">库存告急：仅剩 {pool} 个</div>""", unsafe_allow_html=True)
     else: st.metric("公共池库存", pool)
     
     with st.expander("每日归仓工具"):
