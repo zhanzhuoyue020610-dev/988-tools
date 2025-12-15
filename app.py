@@ -28,13 +28,14 @@ CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
     "DAILY_QUOTA": 25,
     "LOW_STOCK_THRESHOLD": 300,
-    "POINTS_PER_TASK": 10,
+    "POINTS_PER_TASK": 10,       # WhatsApp 新客积分
+    "POINTS_WECHAT_TASK": 5,     # 微信维护积分
     "MAX_RETRIES": 3,
     "AI_MODEL": "gpt-4o-mini"
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑 (保持不变)
+# ☁️ 数据库与核心逻辑
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -80,6 +81,8 @@ def update_user_profile(old_username, new_username, new_password=None, new_realn
             update_data['username'] = new_username
             supabase.table('users').update(update_data).eq('username', old_username).execute()
             supabase.table('leads').update({'assigned_to': new_username}).eq('assigned_to', old_username).execute()
+            # 同时迁移微信客户
+            supabase.table('wechat_customers').update({'assigned_to': new_username}).eq('assigned_to', old_username).execute()
         else:
             supabase.table('users').update(update_data).eq('username', old_username).execute()
         return True
@@ -100,7 +103,7 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 AI 生成 ---
+# --- 🔥 AI 生成逻辑 ---
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
         local_quotes = ["心有繁星，沐光而行。", "坚持是另一种形式的天赋。", "沉稳是职场最高级的修养。", "每一步都算数。", "保持专注，未来可期。"]
@@ -116,6 +119,7 @@ def get_daily_motivation(client):
     return st.session_state["motivation_quote"]
 
 def get_ai_message_sniper(client, shop, link, rep_name):
+    # WA 新客开发文案
     offline_template = f"Здравствуйте! Заметили ваш магазин {shop} на Ozon. {rep_name} из 988 Group на связи. Мы занимаемся поставками из Китая. Можем рассчитать логистику?"
     if not shop or str(shop).lower() in ['nan', 'none', '']: return "数据缺失"
     prompt = f"""
@@ -136,6 +140,32 @@ def get_ai_message_sniper(client, shop, link, rep_name):
         return content
     except: return offline_template
 
+def get_wechat_maintenance_script(client, customer_code, rep_name):
+    """
+    🔥 微信老客维护文案生成器
+    """
+    # 离线兜底
+    offline = f"您好，我是 988 Group 的 {rep_name}。最近生意如何？工厂那边出了一些新品，如果您需要补货或者看新款，随时联系我。"
+    
+    prompt = f"""
+    Role: Key Account Manager '{rep_name}' at 988 Group (Logistics & Trading).
+    Target: Existing Customer '{customer_code}' on WeChat.
+    Task: Write a short, warm, Chinese maintenance message.
+    Context: Weekly check-in.
+    
+    RULES:
+    1. Tone: Casual but professional, like an old friend.
+    2. Content: Ask about their recent sales/stock, or mention shipping speeds are good now.
+    3. NO placeholders.
+    4. Keep it under 50 words.
+    5. Don't be too pushy.
+    """
+    try:
+        if not client: return offline
+        res = client.chat.completions.create(model=CONFIG["AI_MODEL"],messages=[{"role":"user","content":prompt}])
+        return res.choices[0].message.content.strip()
+    except: return offline
+
 def generate_and_update_task(lead, client, rep_name):
     try:
         msg = get_ai_message_sniper(client, lead['shop_name'], lead['shop_link'], rep_name)
@@ -143,7 +173,52 @@ def generate_and_update_task(lead, client, rep_name):
         return True
     except: return False
 
-# --- 数据查询 ---
+# --- 微信 SCRM 逻辑 ---
+def get_wechat_tasks(username):
+    """获取今日需要维护的微信客户"""
+    if not supabase: return []
+    today = date.today().isoformat()
+    # 逻辑：分配给人 + 下次联系时间 <= 今天
+    try:
+        res = supabase.table('wechat_customers').select("*").eq('assigned_to', username).lte('next_contact_date', today).execute()
+        return res.data
+    except: return []
+
+def complete_wechat_task(task_id, cycle_days, username):
+    """完成微信任务：更新时间，加分"""
+    if not supabase: return
+    today = date.today()
+    next_date = (today + timedelta(days=cycle_days)).isoformat()
+    try:
+        supabase.table('wechat_customers').update({
+            'last_contact_date': today.isoformat(),
+            'next_contact_date': next_date
+        }).eq('id', task_id).execute()
+        add_user_points(username, CONFIG["POINTS_WECHAT_TASK"])
+    except: pass
+
+def admin_import_wechat_customers(df_raw):
+    if not supabase: return False
+    try:
+        rows = []
+        for _, row in df_raw.iterrows():
+            # 假设 Excel 列名：客户编号, 业务员, 周期
+            code = str(row.get('客户编号', 'Unknown'))
+            user = str(row.get('业务员', 'admin')) # 默认给admin，需手动改
+            cycle = int(row.get('周期', 7))
+            
+            rows.append({
+                "customer_code": code,
+                "assigned_to": user,
+                "cycle_days": cycle,
+                "next_contact_date": date.today().isoformat() # 导入即需联系
+            })
+        if rows:
+            supabase.table('wechat_customers').insert(rows).execute()
+        return True
+    except: return False
+
+# --- WA 数据查询 ---
 def get_user_daily_performance(username):
     if not supabase: return pd.DataFrame()
     try:
@@ -196,6 +271,7 @@ def delete_user_and_recycle(username):
     if not supabase: return False
     try:
         supabase.table('leads').update({'assigned_to': None, 'assigned_at': None, 'is_contacted': False, 'ai_message': None}).eq('assigned_to', username).eq('is_contacted', False).execute()
+        supabase.table('wechat_customers').update({'assigned_to': None}).eq('assigned_to', username).execute()
         supabase.table('users').delete().eq('username', username).execute()
         return True
     except: return False
@@ -369,10 +445,11 @@ st.markdown("""
     }
 
     /* 2. 基础重置 */
-    .stApp {
-        background-color: var(--bg-color) !important;
+    .stApp, div, section, header, footer, button, input, label, p, h1, h2, h3 {
+        background-color: var(--bg-color);
         color: var(--text-primary);
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
+        text-shadow: none !important;
     }
     
     header { visibility: hidden !important; } 
@@ -395,7 +472,7 @@ st.markdown("""
 
     /* 导航栏 */
     div[data-testid="stRadio"] > div { background-color: var(--surface-color) !important; border: none; padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
-    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
+    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; text-shadow: none !important; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
 
     /* 容器 */
@@ -409,7 +486,7 @@ st.markdown("""
     div[data-testid="stExpander"] summary { color: white !important; background-color: transparent !important;}
     
     /* 按钮系统 - 星云紫 */
-    button { color: var(--btn-text) !important; }
+    button { color: var(--btn-text) !important; text-shadow: none !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
         background: var(--btn-primary) !important; 
         color: var(--btn-text) !important; 
@@ -525,11 +602,11 @@ st.divider()
 
 # 导航
 if st.session_state['role'] == 'admin':
-    menu_map = {"System": "系统监控", "Logs": "活动日志", "Team": "团队管理", "Import": "批量进货"}
-    menu_options = ["System", "Logs", "Team", "Import"]
+    menu_map = {"System": "系统监控", "Logs": "活动日志", "Team": "团队管理", "Import": "批量进货", "WeChat": "微信管理"}
+    menu_options = ["System", "Logs", "Team", "Import", "WeChat"]
 else:
-    menu_map = {"Workbench": "销售工作台"}
-    menu_options = ["Workbench"]
+    menu_map = {"Workbench": "销售工作台", "WeChat": "微信维护"}
+    menu_options = ["Workbench", "WeChat"]
 
 selected_nav = st.radio("导航菜单", menu_options, format_func=lambda x: menu_map.get(x, x), horizontal=True, label_visibility="collapsed")
 st.markdown("<br>", unsafe_allow_html=True)
@@ -586,10 +663,50 @@ if selected_nav == "System" and st.session_state['role'] == 'admin':
                 s.write(f"提取结果: {nums}"); res = process_checknumber_task(nums, CN_KEY, CN_USER)
                 valid = [p for p in nums if res.get(p)=='valid']; s.write(f"有效号码: {valid}")
                 if valid:
-                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员", debug_mode=True)
+                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试店铺", "http://test.com", "管理员")
                     s.write(f"生成结果: {msg}")
                 s.update(label="模拟完成", state="complete")
         except Exception as e: st.error(str(e))
+
+# --- 📱 WECHAT SCRM (New Module) ---
+elif selected_nav == "WeChat":
+    if st.session_state['role'] == 'admin':
+        st.markdown("#### 微信客户管理 (Admin)")
+        
+        # 批量导入
+        with st.expander("📥 导入微信客户", expanded=True):
+            st.caption("Excel格式：客户编号 | 业务员用户名 | 维护周期(天)")
+            wc_file = st.file_uploader("上传 Excel", type=['xlsx', 'csv'], key="wc_up")
+            if wc_file and st.button("开始导入"):
+                try:
+                    df = pd.read_csv(wc_file) if wc_file.name.endswith('.csv') else pd.read_excel(wc_file)
+                    if admin_import_wechat_customers(df):
+                        st.success(f"成功导入 {len(df)} 个客户！")
+                    else: st.error("导入失败，请检查格式")
+                except Exception as e: st.error(str(e))
+                
+    else:
+        st.markdown("#### 💬 微信维护助手")
+        wc_tasks = get_wechat_tasks(st.session_state['username'])
+        
+        if not wc_tasks:
+            st.info("🎉 今日无维护任务，去 WhatsApp 开发新客户吧！")
+        else:
+            st.markdown(f"**今日需维护：{len(wc_tasks)} 人**")
+            for task in wc_tasks:
+                with st.expander(f"客户编号：{task['customer_code']}", expanded=True):
+                    # 动态生成文案
+                    script = get_wechat_maintenance_script(client, task['customer_code'], st.session_state['username'])
+                    st.code(script, language="text")
+                    
+                    c1, c2 = st.columns([3, 1])
+                    with c1:
+                        st.caption(f"上次联系：{task['last_contact_date']} | 周期：{task['cycle_days']}天")
+                    with c2:
+                        if st.button("✅ 完成打卡", key=f"wc_done_{task['id']}"):
+                            complete_wechat_task(task['id'], task['cycle_days'], st.session_state['username'])
+                            st.toast(f"维护完成！积分 +{CONFIG['POINTS_WECHAT_TASK']}")
+                            time.sleep(1); st.rerun()
 
 # --- 💼 WORKBENCH (Sales) ---
 elif selected_nav == "Workbench":
