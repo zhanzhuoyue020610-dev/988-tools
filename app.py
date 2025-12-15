@@ -397,41 +397,34 @@ def check_api_health(cn_user, cn_key, openai_key):
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 核心修复：猎人模式时钟脚本 (Hunter-Seeker Clock Script)
+# 🔥 核心修复：时钟+CSS+JS 一体化注入 (Z-Index 99999 + Brute Force Update)
 st.markdown("""
-<div id="clock-v90" style="
+<div id="clock-container" style="
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-    font-family: 'Inter', monospace; font-size: 15px; font-weight: 500;
-    color: rgba(255,255,255,0.9); z-index: 999999;
-    background: rgba(0,0,0,0.5); padding: 5px 20px; border-radius: 30px;
-    backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.15);
-    box-shadow: 0 4px 15px rgba(0,0,0,0.3); pointer-events: none;
-    letter-spacing: 1px;
-">Loading...</div>
+    font-family: 'Inter', monospace; font-size: 14px; color: rgba(255,255,255,0.7);
+    z-index: 999999; background: rgba(0,0,0,0.4); padding: 4px 16px; border-radius: 20px;
+    backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1); pointer-events: none;
+">Initialize...</div>
 
 <script>
-function startClock() {
-    // 猎人模式：找不到元素就一直找
-    const clock = document.getElementById('clock-v90');
-    if (!clock) {
-        setTimeout(startClock, 50); // 每50ms重试一次
-        return;
+// 暴力时钟脚本 v91.0
+(function() {
+    function updateClock() {
+        var clock = document.getElementById('clock-container');
+        if (clock) {
+            var now = new Date();
+            var timeStr = now.getFullYear() + "/" + 
+                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
+                       String(now.getDate()).padStart(2, '0') + " " + 
+                       String(now.getHours()).padStart(2, '0') + ":" + 
+                       String(now.getMinutes()).padStart(2, '0');
+            clock.innerHTML = timeStr;
+        }
     }
-    
-    function update() {
-        const now = new Date();
-        const str = now.getFullYear() + "/" + 
-                   String(now.getMonth() + 1).padStart(2, '0') + "/" + 
-                   String(now.getDate()).padStart(2, '0') + " " + 
-                   String(now.getHours()).padStart(2, '0') + ":" + 
-                   String(now.getMinutes()).padStart(2, '0');
-        clock.innerHTML = str;
-    }
-    update();
-    setInterval(update, 1000);
-}
-// 启动猎人
-startClock();
+    // 每 100ms 尝试更新一次，确保哪怕 DOM 延迟也能刷出来
+    setInterval(updateClock, 100);
+})();
 </script>
 
 <style>
@@ -455,7 +448,8 @@ startClock();
         -webkit-font-smoothing: antialiased !important;
     }
 
-    /* 2. 🌌 强制深色背景 (穿透修复白屏) */
+    /* 2. 🌌 强制深色背景 (修复白屏的关键) */
+    /* 强制覆盖 Streamlit 的白色底板 */
     .stApp, [data-testid="stAppViewContainer"] {
         background-color: #09090b !important;
         background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%) !important;
@@ -463,7 +457,7 @@ startClock();
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
     }
     
-    /* 3. 🌠 流光动画 */
+    /* 3. 🌠 流光动画 (不遮挡) */
     [data-testid="stAppViewContainer"]::after {
         content: "";
         position: fixed;
@@ -472,7 +466,7 @@ startClock();
         background-size: 200% 100%;
         animation: shimmer 8s infinite linear;
         pointer-events: none;
-        z-index: 0;
+        z-index: 0; /* 背景层级 */
     }
     
     @keyframes shimmer {
