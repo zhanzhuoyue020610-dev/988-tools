@@ -12,7 +12,6 @@ import hashlib
 import random
 from datetime import date, datetime, timedelta
 import concurrent.futures
-# 🔥 引入组件库
 import streamlit.components.v1 as components
 
 try:
@@ -275,14 +274,13 @@ def admin_bulk_upload_to_pool(rows_to_insert):
         if not final_rows:
             return 0, f"所有 {len(rows_to_insert)} 个号码均已存在。"
         
-        # 🔥 核心修复：强制注入 'username' 字段
         for row in final_rows:
             row['username'] = st.session_state.get('username', 'admin') 
 
         response = supabase.table('leads').insert(final_rows).execute()
         
         if len(response.data) == 0:
-            return 0, "⚠️ RLS 权限拒绝，请检查 Supabase 策略。"
+            return 0, "⚠️ 数据库权限拒绝 (RLS Policy Blocking)。"
             
         return len(response.data), "Success"
 
@@ -342,21 +340,24 @@ def mark_lead_complete_secure(lead_id, username):
 
 def get_daily_logs(query_date):
     if not supabase: return pd.DataFrame(), pd.DataFrame()
-    raw_claims = supabase.table('leads').select('assigned_to, assigned_at').eq('assigned_at', query_date).execute().data
-    df_claims = pd.DataFrame(raw_claims)
-    if not df_claims.empty:
-        df_claims = df_claims[df_claims['assigned_to'] != 'admin'] 
-        df_claim_summary = df_claims.groupby('assigned_to').size().reset_index(name='领取数量')
-    else: df_claim_summary = pd.DataFrame(columns=['assigned_to', '领取数量'])
-    start_dt = f"{query_date}T00:00:00"
-    end_dt = f"{query_date}T23:59:59"
-    raw_done = supabase.table('leads').select('assigned_to, completed_at').gte('completed_at', start_dt).lte('completed_at', end_dt).execute().data
-    df_done = pd.DataFrame(raw_done)
-    if not df_done.empty:
-        df_done = df_done[df_done['assigned_to'] != 'admin']
-        df_done_summary = df_done.groupby('assigned_to').size().reset_index(name='实际处理')
-    else: df_done_summary = pd.DataFrame(columns=['assigned_to', '实际处理'])
-    return df_claim_summary, df_done_summary
+    try:
+        raw_claims = supabase.table('leads').select('assigned_to, assigned_at').eq('assigned_at', query_date).execute().data
+        df_claims = pd.DataFrame(raw_claims)
+        if not df_claims.empty:
+            df_claims = df_claims[df_claims['assigned_to'] != 'admin'] 
+            df_claim_summary = df_claims.groupby('assigned_to').size().reset_index(name='领取数量')
+        else: df_claim_summary = pd.DataFrame(columns=['assigned_to', '领取数量'])
+        
+        start_dt = f"{query_date}T00:00:00"
+        end_dt = f"{query_date}T23:59:59"
+        raw_done = supabase.table('leads').select('assigned_to, completed_at').gte('completed_at', start_dt).lte('completed_at', end_dt).execute().data
+        df_done = pd.DataFrame(raw_done)
+        if not df_done.empty:
+            df_done = df_done[df_done['assigned_to'] != 'admin']
+            df_done_summary = df_done.groupby('assigned_to').size().reset_index(name='实际处理')
+        else: df_done_summary = pd.DataFrame(columns=['assigned_to', '实际处理'])
+        return df_claim_summary, df_done_summary
+    except Exception: return pd.DataFrame(), pd.DataFrame() # 兜底防止崩溃
 
 def extract_all_numbers(row_series):
     txt = " ".join([str(val) for val in row_series if pd.notna(val)])
@@ -429,25 +430,7 @@ def check_api_health(cn_user, cn_key, openai_key):
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 核心修复：components.html + 暴力轮询
-components.html("""
-    <script>
-        function updateClock() {
-            var now = new Date();
-            var timeStr = now.getFullYear() + "/" + 
-                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
-                       String(now.getDate()).padStart(2, '0') + " " + 
-                       String(now.getHours()).padStart(2, '0') + ":" + 
-                       String(now.getMinutes()).padStart(2, '0');
-            
-            // 穿透 Iframe 寻找父级元素
-            var clock = window.parent.document.getElementById('clock-container');
-            if (clock) { clock.innerHTML = timeStr; }
-        }
-        setInterval(updateClock, 1000);
-    </script>
-""", height=0)
-
+# 🔥 核心修复：时钟+CSS+JS 一体化注入 (Z-Index 99999 + Brute Force Update)
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -457,6 +440,25 @@ st.markdown("""
     box-shadow: 0 4px 10px rgba(0,0,0,0.2); pointer-events: none; letter-spacing: 1px;
     font-weight: 500;
 ">Initialize...</div>
+
+<script>
+(function() {
+    function updateClock() {
+        var clock = document.getElementById('clock-container');
+        if (clock) {
+            var now = new Date();
+            var timeStr = now.getFullYear() + "/" + 
+                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
+                       String(now.getDate()).padStart(2, '0') + " " + 
+                       String(now.getHours()).padStart(2, '0') + ":" + 
+                       String(now.getMinutes()).padStart(2, '0');
+            clock.innerHTML = timeStr;
+        }
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+})();
+</script>
 
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -471,7 +473,6 @@ st.markdown("""
         --btn-text: #ffffff;
     }
 
-    /* 全局去黑框 */
     * {
         text-shadow: none !important;
         -webkit-text-stroke: 0px !important;
@@ -479,7 +480,6 @@ st.markdown("""
         -webkit-font-smoothing: antialiased !important;
     }
 
-    /* 强制深色背景 */
     .stApp, [data-testid="stAppViewContainer"] {
         background-color: #09090b !important;
         background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%) !important;
@@ -493,6 +493,7 @@ st.markdown("""
         background-size: 200% 100%; animation: shimmer 8s infinite linear;
         pointer-events: none; z-index: 0;
     }
+    
     @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
     [data-testid="stHeader"] { background-color: transparent !important; }
