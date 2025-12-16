@@ -255,17 +255,13 @@ def delete_user_and_recycle(username):
         return True
     except: return False
 
-# 🔥 核心修复：v99.0 RLS 侦测与暴力写入
 def admin_bulk_upload_to_pool(rows_to_insert):
     if not supabase or not rows_to_insert: return 0, "No data to insert"
-    
     success_count = 0
-    
-    # 1. 提取本次所有号码
-    incoming_phones = [str(r['phone']) for r in rows_to_insert] # 强制转字符串
+    incoming_phones = [str(r['phone']) for r in rows_to_insert]
     
     try:
-        # 2. 从数据库查询已存在号码 (分批查)
+        # DB Deduplication
         existing_phones = set()
         chunk_size = 500
         for i in range(0, len(incoming_phones), chunk_size):
@@ -274,24 +270,22 @@ def admin_bulk_upload_to_pool(rows_to_insert):
             for item in res.data:
                 existing_phones.add(str(item['phone']))
         
-        # 3. 内存过滤
         final_rows = [r for r in rows_to_insert if str(r['phone']) not in existing_phones]
         
         if not final_rows:
-            return 0, f"所有 {len(rows_to_insert)} 个号码均已存在，已过滤。"
+            return 0, f"所有 {len(rows_to_insert)} 个号码均已存在。"
         
-        # 4. 执行插入
-        # 🔥 关键修改：检查返回数据，探测 RLS
+        # Batch Insert
         response = supabase.table('leads').insert(final_rows).execute()
         
-        # 如果没有报错，但是返回的数据是空的，说明被 RLS 拦截了
+        # RLS Detector
         if len(response.data) == 0:
-            return 0, "⚠️ 数据库权限拒绝 (RLS Policy Blocking)。请在 Supabase 后台执行 SQL: ALTER TABLE leads DISABLE ROW LEVEL SECURITY;"
+            return 0, "⚠️ 数据库权限拒绝 (RLS Policy Blocking)。请检查 Supabase RLS 设置。"
             
         return len(response.data), "Success"
 
     except Exception as e:
-        # 5. 兜底逐条插入
+        # Fallback Sequential
         err_msg = str(e)
         for row in final_rows:
             try:
@@ -301,9 +295,9 @@ def admin_bulk_upload_to_pool(rows_to_insert):
                 pass
         
         if success_count > 0:
-            return success_count, f"批量失败({err_msg[:20]}...)，逐条抢救成功 {success_count} 个"
+            return success_count, f"批量失败({err_msg[:20]}...)，逐条成功 {success_count} 个"
         else:
-            return 0, f"入库失败: {err_msg}"
+            return 0, f"入库彻底失败: {err_msg}"
 
 def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
@@ -377,14 +371,16 @@ def extract_all_numbers(row_series):
         if clean: candidates.append(clean)
     return list(set(candidates))
 
+# 🔥 核心修正：返回 raw_data 供诊断
 def process_checknumber_task(phone_list, api_key, user_id):
-    if not phone_list: return {}, "Empty List"
+    if not phone_list: return {}, "Empty List", None
     status_map = {p: 'unknown' for p in phone_list}
     headers = {"X-API-Key": api_key}
+    
     try:
         files = {'file': ('input.txt', "\n".join(phone_list), 'text/plain')}
         resp = requests.post(CONFIG["CN_BASE_URL"], headers=headers, files=files, data={'user_id': user_id}, verify=False)
-        if resp.status_code != 200: return status_map, f"API Upload Error: {resp.status_code}"
+        if resp.status_code != 200: return status_map, f"API Upload Error: {resp.status_code}", None
         task_id = resp.json().get("task_id")
         for i in range(60): 
             time.sleep(2)
@@ -395,14 +391,25 @@ def process_checknumber_task(phone_list, api_key, user_id):
                     f = requests.get(result_url, verify=False)
                     try: df = pd.read_excel(io.BytesIO(f.content))
                     except: df = pd.read_csv(io.BytesIO(f.content))
+                    
+                    # 🔥 诊断点：将 API 返回的原始表格数据传回去
                     for _, r in df.iterrows():
-                        ws = str(r.get('whatsapp') or r.get('status') or '').lower()
-                        nm = re.sub(r'\D', '', str(r.get('number') or r.get('phone') or ''))
-                        if "yes" in ws or "valid" in ws: status_map[nm] = 'valid'
-                        else: status_map[nm] = 'invalid'
-                return status_map, "Success"
-        return status_map, "Timeout"
-    except Exception as e: return status_map, str(e)
+                        # 尝试所有可能的列名
+                        status_val = str(r.get('whatsapp') or r.get('status') or r.get('Status') or '').lower()
+                        
+                        # 寻找号码列
+                        nm_col = next((c for c in df.columns if 'number' in c.lower() or 'phone' in c.lower()), None)
+                        if nm_col:
+                            nm = re.sub(r'\D', '', str(r[nm_col]))
+                            # 🔥 宽容匹配：只要包含肯定词汇就算过
+                            if any(x in status_val for x in ['yes', 'valid', 'active', 'true', 'ok']):
+                                status_map[nm] = 'valid'
+                            else:
+                                status_map[nm] = 'invalid'
+                    
+                    return status_map, "Success", df # 返回 DF 以供诊断
+        return status_map, "Timeout", None
+    except Exception as e: return status_map, str(e), None
 
 def check_api_health(cn_user, cn_key, openai_key):
     status = {"supabase": False, "checknumber": False, "openai": False, "msg": []}
@@ -432,6 +439,7 @@ def check_api_health(cn_user, cn_key, openai_key):
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
+# 🔥 JS 时钟
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -816,9 +824,15 @@ elif selected_nav == "Import":
                 else:
                     for i in range(0, len(plist), 500):
                         batch = plist[i:i+500]
-                        res, err = process_checknumber_task(batch, CN_KEY, CN_USER)
+                        res, err, df_debug = process_checknumber_task(batch, CN_KEY, CN_USER)
+                        
+                        # 🔥 诊断：如果验证失败，显示返回的原始数据
                         if err != "Success" and err != "Empty List":
-                            s.write(f"验证失败 ({err})，请尝试勾选“跳过验证”重试。")
+                            s.write(f"❌ 验证失败 ({err})")
+                            if df_debug is not None:
+                                s.write("API 返回数据预览：")
+                                st.dataframe(df_debug.head())
+                        
                         valid.extend([p for p in batch if res.get(p)=='valid'])
                         time.sleep(1)
                 
@@ -827,15 +841,15 @@ elif selected_nav == "Import":
                 rows = []
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
-                    # 🔥 核心修正：Msg 设为空字符串 ""，而不是 None
+                    # 🔥 核心修正：Msg 设为空字符串 ""
                     rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":"", "retry_count": 0, "is_frozen": False, "error_log": None})
                     if len(rows)>=100: 
                         count, msg = admin_bulk_upload_to_pool(rows)
-                        if count == 0 and len(rows) > 0: s.write(f"批次警告: {msg}")
+                        if count == 0 and len(rows) > 0: s.write(f"⚠️ 批次警告: {msg}")
                         rows=[]
                 if rows: 
                     count, msg = admin_bulk_upload_to_pool(rows)
-                    if count == 0 and len(rows) > 0: s.write(f"批次警告: {msg}")
+                    if count == 0 and len(rows) > 0: s.write(f"⚠️ 批次警告: {msg}")
                     
                 s.update(label="操作完成", state="complete")
             time.sleep(1); st.rerun()
