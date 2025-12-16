@@ -255,15 +255,13 @@ def delete_user_and_recycle(username):
         return True
     except: return False
 
-# 🔥 核心修复：键名统一 (KeyError Fix)
 def admin_bulk_upload_to_pool(rows_to_insert):
     if not supabase or not rows_to_insert: return 0, "No data to insert"
     success_count = 0
-    
-    # 统一使用 'phone' 作为键名
     incoming_phones = [str(r['phone']) for r in rows_to_insert]
     
     try:
+        # DB 去重
         existing_phones = set()
         chunk_size = 500
         for i in range(0, len(incoming_phones), chunk_size):
@@ -277,17 +275,25 @@ def admin_bulk_upload_to_pool(rows_to_insert):
         if not final_rows:
             return 0, f"所有 {len(rows_to_insert)} 个号码均已存在。"
         
+        # 🔥 核心修复：强制注入 'username' 字段
+        # 很多 Supabase 表都有一个 'username' 非空列（用于记录创建者或所有者），
+        # 我们这里填入 'admin' 或当前操作者，以满足数据库约束。
+        for row in final_rows:
+            row['username'] = st.session_state.get('username', 'admin') 
+
         response = supabase.table('leads').insert(final_rows).execute()
         
         if len(response.data) == 0:
-            return 0, "⚠️ 数据库权限拒绝 (RLS Policy Blocking)。"
+            return 0, "⚠️ RLS 权限拒绝，请检查 Supabase 策略。"
             
         return len(response.data), "Success"
 
     except Exception as e:
         err_msg = str(e)
+        # 兜底逐条
         for row in final_rows:
             try:
+                row['username'] = st.session_state.get('username', 'admin') # 确保逐条也加了这个字段
                 supabase.table('leads').insert(row).execute()
                 success_count += 1
             except: pass
@@ -426,6 +432,7 @@ def check_api_health(cn_user, cn_key, openai_key):
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
+# 🔥 JS 时钟
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
