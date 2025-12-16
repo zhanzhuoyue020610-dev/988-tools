@@ -12,7 +12,6 @@ import hashlib
 import random
 from datetime import date, datetime, timedelta
 import concurrent.futures
-# 🔥 必须引入组件库
 import streamlit.components.v1 as components
 
 try:
@@ -24,11 +23,10 @@ except ImportError:
 warnings.filterwarnings("ignore")
 
 # ==========================================
-# 🎨 UI 主题 & 核心配置 (置顶加载)
+# 🎨 UI 主题 & 核心配置 (置顶)
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔧 系统配置
 CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
     "DAILY_QUOTA": 25,
@@ -39,8 +37,7 @@ CONFIG = {
     "AI_MODEL": "gpt-4o-mini"
 }
 
-# 🔥🔥🔥 核心修复：时钟代码置顶 (Priority Injection) 🔥🔥🔥
-# 1. 放置 HTML 占位符
+# 1. 注入时钟 HTML 占位符
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -48,11 +45,30 @@ st.markdown("""
     z-index: 999999; background: rgba(0,0,0,0.6); padding: 6px 20px; border-radius: 30px;
     backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.15);
     box-shadow: 0 4px 15px rgba(0,0,0,0.3); pointer-events: none; letter-spacing: 1px;
-    font-weight: 600; text-shadow: none;
+    font-weight: 600; text-shadow: none; display: block !important;
 ">Initialize...</div>
 """, unsafe_allow_html=True)
 
-# 2. 注入 CSS (暗黑流光 + 去黑框)
+# 2. 注入 JS (强力轮询 + Iframe 穿透)
+components.html("""
+    <script>
+        function updateClock() {
+            var now = new Date();
+            var timeStr = now.getFullYear() + "/" + 
+                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
+                       String(now.getDate()).padStart(2, '0') + " " + 
+                       String(now.getHours()).padStart(2, '0') + ":" + 
+                       String(now.getMinutes()).padStart(2, '0');
+            
+            // 穿透寻找父页面的元素
+            var clock = window.parent.document.getElementById('clock-container');
+            if (clock) { clock.innerHTML = timeStr; }
+        }
+        setInterval(updateClock, 1000);
+    </script>
+""", height=0)
+
+# 3. 注入 CSS (暗黑流光 + 防白屏层级修正)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -67,7 +83,7 @@ st.markdown("""
         --btn-text: #ffffff;
     }
 
-    /* 全局去黑框 & 字体平滑 */
+    /* 全局重置 */
     * {
         text-shadow: none !important;
         -webkit-text-stroke: 0px !important;
@@ -83,7 +99,7 @@ st.markdown("""
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
     }
     
-    /* 流光动画层 (z-index: 0 不遮挡内容) */
+    /* 流光动画层 (z-index: 0) */
     [data-testid="stAppViewContainer"]::after {
         content: ""; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
         background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.03) 50%, transparent 60%);
@@ -91,6 +107,12 @@ st.markdown("""
         pointer-events: none; z-index: 0;
     }
     @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+    /* 🔥 关键修复：提升内容层级，防止被背景遮挡导致不可点击或白屏 */
+    .block-container {
+        position: relative;
+        z-index: 10 !important;
+    }
 
     /* 强制头部透明 */
     [data-testid="stHeader"] { background-color: transparent !important; }
@@ -129,30 +151,11 @@ st.markdown("""
 
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: rgba(30, 31, 32, 0.6) !important; color: var(--text-secondary); }
     .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
+    
     h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
     .stCaption { color: #8e8e8e !important; }
 </style>
 """, unsafe_allow_html=True)
-
-# 3. 注入 JS (穿透 iframe，暴力轮询)
-components.html("""
-    <script>
-        function updateClock() {
-            var now = new Date();
-            var timeStr = now.getFullYear() + "/" + 
-                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
-                       String(now.getDate()).padStart(2, '0') + " " + 
-                       String(now.getHours()).padStart(2, '0') + ":" + 
-                       String(now.getMinutes()).padStart(2, '0');
-            
-            // 穿透寻找父页面的元素
-            var clock = window.parent.document.getElementById('clock-container');
-            if (clock) { clock.innerHTML = timeStr; }
-        }
-        setInterval(updateClock, 1000);
-    </script>
-""", height=0)
-
 
 # ==========================================
 # ☁️ 数据库与核心逻辑
@@ -378,46 +381,34 @@ def admin_bulk_upload_to_pool(rows_to_insert):
     if not supabase or not rows_to_insert: return 0, "No data to insert"
     success_count = 0
     incoming_phones = [str(r['phone']) for r in rows_to_insert]
-    
     try:
-        # DB 去重
         existing_phones = set()
         chunk_size = 500
         for i in range(0, len(incoming_phones), chunk_size):
             batch = incoming_phones[i:i+chunk_size]
             res = supabase.table('leads').select('phone').in_('phone', batch).execute()
-            for item in res.data:
-                existing_phones.add(str(item['phone']))
+            for item in res.data: existing_phones.add(str(item['phone']))
         
         final_rows = [r for r in rows_to_insert if str(r['phone']) not in existing_phones]
+        if not final_rows: return 0, f"所有 {len(rows_to_insert)} 个号码均已存在。"
         
-        if not final_rows:
-            return 0, f"所有 {len(rows_to_insert)} 个号码均已存在。"
-        
-        # 🔥 强制填入 username 防止报错
-        for row in final_rows:
-            row['username'] = st.session_state.get('username', 'admin') 
+        # 🔥 强制填入 username 防止报错 (admin)
+        for row in final_rows: row['username'] = st.session_state.get('username', 'admin')
 
         response = supabase.table('leads').insert(final_rows).execute()
-        
-        if len(response.data) == 0:
-            return 0, "⚠️ RLS 权限拒绝，请检查 Supabase 策略。"
-            
+        if len(response.data) == 0: return 0, "⚠️ 数据库权限拒绝 (RLS Policy Blocking)。"
         return len(response.data), "Success"
 
     except Exception as e:
         err_msg = str(e)
         for row in final_rows:
             try:
-                row['username'] = st.session_state.get('username', 'admin') 
+                row['username'] = st.session_state.get('username', 'admin')
                 supabase.table('leads').insert(row).execute()
                 success_count += 1
             except: pass
-        
-        if success_count > 0:
-            return success_count, f"批量失败，逐条成功 {success_count} 个"
-        else:
-            return 0, f"入库失败: {err_msg}"
+        if success_count > 0: return success_count, f"批量失败，逐条成功 {success_count} 个"
+        else: return 0, f"入库失败: {err_msg}"
 
 def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
@@ -723,7 +714,7 @@ elif selected_nav == "Workbench":
         force_import = st.checkbox("跳过验证（强行入库）", help="如 API 故障，请勾选此项强制导入", key="force_import")
         
         if curr < total:
-            if st.button(f"领取任务 (余 {total-curr})"):
+            if st.button(f"领取任务 (余 {total-curr} 个)"):
                 _, status = claim_daily_tasks(st.session_state['username'], client)
                 if status=="empty": st.markdown("""<div class="custom-alert alert-error">公池已空</div>""", unsafe_allow_html=True)
                 else: st.rerun()
@@ -768,6 +759,72 @@ elif selected_nav == "Workbench":
     if not df_history.empty:
         st.dataframe(df_history, column_config={"shop_name": "客户店铺", "phone": "联系电话", "shop_link": st.column_config.LinkColumn("店铺链接"), "completed_at": st.column_config.DatetimeColumn("处理时间", format="YYYY-MM-DD HH:mm")}, use_container_width=True)
     else: st.caption("暂无历史记录")
+
+# --- 📅 LOGS (Admin) ---
+elif selected_nav == "Logs":
+    st.markdown("#### 活动日志监控")
+    d = st.date_input("选择日期", date.today())
+    
+    # 🔥 FIX: 修复 Logs 页面空白问题
+    try:
+        if d:
+            c, f = get_daily_logs(d.isoformat())
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("领取记录")
+                if not c.empty: st.dataframe(c, use_container_width=True)
+                else: st.markdown("""<div class="custom-alert alert-info">无数据</div>""", unsafe_allow_html=True)
+            with col2:
+                st.markdown("完成记录")
+                if not f.empty: st.dataframe(f, use_container_width=True)
+                else: st.markdown("""<div class="custom-alert alert-info">无数据</div>""", unsafe_allow_html=True)
+    except Exception as e:
+        st.markdown(f"""<div class="custom-alert alert-error">日志加载失败: {str(e)}</div>""", unsafe_allow_html=True)
+
+# --- 👥 TEAM (Admin) ---
+elif selected_nav == "Team":
+    # 🔥 FIX: 修复 Team 页面空白问题
+    try:
+        users = pd.DataFrame(supabase.table('users').select("*").neq('role', 'admin').execute().data)
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            if not users.empty: u = st.radio("员工列表", users['username'].tolist(), label_visibility="collapsed")
+            else: u = None; st.markdown("""<div class="custom-alert alert-info">暂无员工</div>""", unsafe_allow_html=True)
+            st.markdown("---")
+            with st.expander("新增员工"):
+                with st.form("new"):
+                    nu = st.text_input("用户名"); np = st.text_input("密码", type="password"); nn = st.text_input("真实姓名")
+                    if st.form_submit_button("创建账号"): create_user(nu, np, nn); st.rerun()
+        with c2:
+            if u:
+                info = users[users['username']==u].iloc[0]
+                tc, td, hist = get_user_historical_data(u)
+                perf = get_user_daily_performance(u)
+                st.markdown(f"### {info['real_name']}")
+                st.caption(f"账号: {info['username']} | 积分: {info.get('points', 0)} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
+                k1, k2 = st.columns(2)
+                k1.metric("历史总领取", tc); k2.metric("历史总完成", td)
+                t1, t2, t3 = st.tabs(["每日绩效", "详细清单", "账号设置"])
+                with t1:
+                    if not perf.empty: st.bar_chart(perf); st.dataframe(perf, use_container_width=True)
+                    else: st.caption("暂无数据")
+                with t2:
+                    if not hist.empty: st.dataframe(hist, use_container_width=True)
+                    else: st.caption("暂无数据")
+                with t3:
+                    st.markdown("**修改资料**")
+                    with st.form("edit_user"):
+                        new_u = st.text_input("新用户名 (留空则不改)", value=u)
+                        new_n = st.text_input("新真实姓名 (留空则不改)", value=info['real_name'])
+                        new_p = st.text_input("新密码 (留空则不改)", type="password")
+                        if st.form_submit_button("保存修改"):
+                            if update_user_profile(u, new_u, new_p if new_p else None, new_n): st.success("资料已更新"); time.sleep(1); st.rerun()
+                            else: st.error("更新失败")
+                    st.markdown("---")
+                    st.markdown("**危险操作**")
+                    if st.button("删除账号并回收任务"): delete_user_and_recycle(u); st.rerun()
+    except Exception as e:
+        st.markdown(f"""<div class="custom-alert alert-error">无法读取团队数据: {str(e)} <br>请确认已执行 SQL: ALTER TABLE users DISABLE ROW LEVEL SECURITY;</div>""", unsafe_allow_html=True)
 
 # --- 📥 IMPORT (Admin) ---
 elif selected_nav == "Import":
