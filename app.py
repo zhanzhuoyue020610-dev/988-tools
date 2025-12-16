@@ -227,7 +227,8 @@ def get_user_historical_data(username):
 def get_public_pool_count():
     if not supabase: return 0
     try:
-        res = supabase.table('leads').select('id', count='exact').is_('assigned_to', 'null').eq('is_frozen', False).execute()
+        # 🔥 修正：更宽容的查询，防止因 NULL 问题漏统计
+        res = supabase.table('leads').select('id', count='exact').is_('assigned_to', 'null').execute()
         return res.count
     except: return 0
 
@@ -255,21 +256,37 @@ def delete_user_and_recycle(username):
         return True
     except: return False
 
-def admin_bulk_upload_to_pool(leads_data):
-    if not supabase or not leads_data: return False
+# 🔥 核心修复：Python 侧去重 + 显性报错
+def admin_bulk_upload_to_pool(rows_to_insert):
+    if not supabase or not rows_to_insert: return 0, "No data"
+    
     try:
-        rows = []
-        for item in leads_data:
-            rows.append({
-                "shop_name": item['Shop'], "shop_link": item['Link'], "phone": item['Phone'], 
-                "ai_message": None, "is_valid": True, "assigned_to": None, "assigned_at": None, "is_contacted": False,
-                "retry_count": 0, "is_frozen": False, "error_log": None
-            })
+        # 1. 提取所有待插入的号码
+        new_phones = [r['phone'] for r in rows_to_insert]
+        
+        # 2. 从数据库查询这些号码是否已存在 (分批查询以防 URL 过长)
+        existing_phones = set()
         chunk_size = 500
-        for i in range(0, len(rows), chunk_size):
-            supabase.table('leads').insert(rows[i:i+chunk_size]).execute()
-        return True
-    except: return False
+        for i in range(0, len(new_phones), chunk_size):
+            batch = new_phones[i:i+chunk_size]
+            res = supabase.table('leads').select('phone').in_('phone', batch).execute()
+            for item in res.data:
+                existing_phones.add(item['phone'])
+        
+        # 3. 过滤出真正的新号码
+        final_rows = [r for r in rows_to_insert if r['phone'] not in existing_phones]
+        
+        if not final_rows:
+            return 0, "所有号码均已存在，无需入库"
+        
+        # 4. 执行插入 (使用纯 Insert，不再 Upsert)
+        # 只要有一条失败，就会抛出异常，前端能看到
+        supabase.table('leads').insert(final_rows).execute()
+        
+        return len(final_rows), "Success"
+
+    except Exception as e:
+        return 0, f"DB Error: {str(e)}"
 
 def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
@@ -278,6 +295,8 @@ def claim_daily_tasks(username, client):
     
     if current_count >= CONFIG["DAILY_QUOTA"]: return existing, "full"
     needed = CONFIG["DAILY_QUOTA"] - current_count
+    
+    # 修改：只取未分配 且 未冻结的任务
     pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').eq('is_frozen', False).limit(needed).execute().data
     
     if pool_leads:
@@ -334,15 +353,12 @@ def extract_all_numbers(row_series):
     matches = re.findall(r'(?:^|\D)([789][\d\s\-\(\)]{9,16})(?:\D|$)', txt)
     candidates = []
     for raw in matches:
-        # 🔥 俄罗斯号码智能清洗
         d = re.sub(r'\D', '', raw)
         clean = None
         if len(d) == 11:
-            if d.startswith('7'): clean = d # 7xxxxxxxxxx OK
-            elif d.startswith('8'): clean = '7' + d[1:] # 8xxxxxxxxxx -> 7xxxxxxxxxx
-        elif len(d) == 10 and d.startswith('9'): 
-            clean = '7' + d # 9xxxxxxxxx -> 79xxxxxxxxx
-        
+            if d.startswith('7'): clean = d
+            elif d.startswith('8'): clean = '7' + d[1:]
+        elif len(d) == 10 and d.startswith('9'): clean = '7' + d
         if clean: candidates.append(clean)
     return list(set(candidates))
 
@@ -350,46 +366,28 @@ def process_checknumber_task(phone_list, api_key, user_id):
     if not phone_list: return {}, "Empty List"
     status_map = {p: 'unknown' for p in phone_list}
     headers = {"X-API-Key": api_key}
-    
-    # 诊断信息
-    diag_info = ""
-    
     try:
         files = {'file': ('input.txt', "\n".join(phone_list), 'text/plain')}
         resp = requests.post(CONFIG["CN_BASE_URL"], headers=headers, files=files, data={'user_id': user_id}, verify=False)
-        
-        if resp.status_code != 200:
-            return status_map, f"API Upload Error: {resp.status_code} - {resp.text}"
-            
+        if resp.status_code != 200: return status_map, f"API Upload Error: {resp.status_code}"
         task_id = resp.json().get("task_id")
-        if not task_id:
-            return status_map, "No Task ID returned"
-
-        # 轮询
         for i in range(60): 
             time.sleep(2)
             poll = requests.get(f"{CONFIG['CN_BASE_URL']}/{task_id}", headers=headers, params={'user_id': user_id}, verify=False)
-            status = poll.json().get("status")
-            
-            if status in ["exported", "completed"]:
+            if poll.json().get("status") in ["exported", "completed"]:
                 result_url = poll.json().get("result_url")
                 if result_url:
                     f = requests.get(result_url, verify=False)
                     try: df = pd.read_excel(io.BytesIO(f.content))
                     except: df = pd.read_csv(io.BytesIO(f.content))
-                    
                     for _, r in df.iterrows():
                         ws = str(r.get('whatsapp') or r.get('status') or '').lower()
-                        # 兼容不同列名
-                        nm_col = next((c for c in df.columns if 'number' in c.lower() or 'phone' in c.lower()), None)
-                        if nm_col:
-                            nm = re.sub(r'\D', '', str(r[nm_col]))
-                            if "yes" in ws or "valid" in ws: status_map[nm] = 'valid'
-                            else: status_map[nm] = 'invalid'
+                        nm = re.sub(r'\D', '', str(r.get('number') or r.get('phone') or ''))
+                        if "yes" in ws or "valid" in ws: status_map[nm] = 'valid'
+                        else: status_map[nm] = 'invalid'
                 return status_map, "Success"
         return status_map, "Timeout"
-    except Exception as e:
-        return status_map, str(e)
+    except Exception as e: return status_map, str(e)
 
 def check_api_health(cn_user, cn_key, openai_key):
     status = {"supabase": False, "checknumber": False, "openai": False, "msg": []}
@@ -431,7 +429,7 @@ st.markdown("""
 ">Initialize...</div>
 
 <script>
-// 暴力轮询时钟 v92.0
+// 暴力轮询时钟 v96.0
 (function() {
     function updateClock() {
         var clock = document.getElementById('clock-container');
@@ -535,7 +533,7 @@ st.markdown("""
     div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
     
     /* 按钮 */
-    button { color: var(--btn-text) !important; text-shadow: none !important; }
+    button { color: var(--btn-text) !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
         background: var(--btn-primary) !important; color: var(--btn-text) !important; 
         border: none !important; border-radius: 50px !important; padding: 10px 24px !important; 
@@ -748,10 +746,10 @@ elif selected_nav == "Workbench":
     with c_action:
         st.markdown("<br>", unsafe_allow_html=True)
         # 🔥 增加“跳过验证”开关
-        force_import = st.checkbox("跳过验证（强行入库）", help="如果 API 故障，勾选此项强制导入所有号码", key="force_import")
+        force_import = st.checkbox("跳过验证（强行入库）", help="如 API 故障，请勾选此项强制导入", key="force_import")
         
         if curr < total:
-            if st.button(f"领取任务 (余 {total-curr})"):
+            if st.button(f"领取任务 (余 {total-curr} 个)"):
                 _, status = claim_daily_tasks(st.session_state['username'], client)
                 if status=="empty": st.markdown("""<div class="custom-alert alert-error">公池已空</div>""", unsafe_allow_html=True)
                 else: st.rerun()
@@ -797,63 +795,6 @@ elif selected_nav == "Workbench":
         st.dataframe(df_history, column_config={"shop_name": "客户店铺", "phone": "联系电话", "shop_link": st.column_config.LinkColumn("店铺链接"), "completed_at": st.column_config.DatetimeColumn("处理时间", format="YYYY-MM-DD HH:mm")}, use_container_width=True)
     else: st.caption("暂无历史记录")
 
-# --- 📅 LOGS (Admin) ---
-elif selected_nav == "Logs":
-    st.markdown("#### 活动日志监控")
-    d = st.date_input("选择日期", date.today())
-    if d:
-        c, f = get_daily_logs(d.isoformat())
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("领取记录")
-            if not c.empty: st.dataframe(c, use_container_width=True)
-            else: st.caption("无数据")
-        with col2:
-            st.markdown("完成记录")
-            if not f.empty: st.dataframe(f, use_container_width=True)
-            else: st.caption("无数据")
-
-# --- 👥 TEAM (Admin) ---
-elif selected_nav == "Team":
-    users = pd.DataFrame(supabase.table('users').select("*").neq('role', 'admin').execute().data)
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        if not users.empty: u = st.radio("员工列表", users['username'].tolist(), label_visibility="collapsed")
-        else: u = None; st.info("暂无员工")
-        st.markdown("---")
-        with st.expander("新增员工"):
-            with st.form("new"):
-                nu = st.text_input("用户名"); np = st.text_input("密码", type="password"); nn = st.text_input("真实姓名")
-                if st.form_submit_button("创建账号"): create_user(nu, np, nn); st.rerun()
-    with c2:
-        if u:
-            info = users[users['username']==u].iloc[0]
-            tc, td, hist = get_user_historical_data(u)
-            perf = get_user_daily_performance(u)
-            st.markdown(f"### {info['real_name']}")
-            st.caption(f"账号: {info['username']} | 积分: {info.get('points', 0)} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
-            k1, k2 = st.columns(2)
-            k1.metric("历史总领取", tc); k2.metric("历史总完成", td)
-            t1, t2, t3 = st.tabs(["每日绩效", "详细清单", "账号设置"])
-            with t1:
-                if not perf.empty: st.bar_chart(perf); st.dataframe(perf, use_container_width=True)
-                else: st.caption("暂无数据")
-            with t2:
-                if not hist.empty: st.dataframe(hist, use_container_width=True)
-                else: st.caption("暂无数据")
-            with t3:
-                st.markdown("**修改资料**")
-                with st.form("edit_user"):
-                    new_u = st.text_input("新用户名 (留空则不改)", value=u)
-                    new_n = st.text_input("新真实姓名 (留空则不改)", value=info['real_name'])
-                    new_p = st.text_input("新密码 (留空则不改)", type="password")
-                    if st.form_submit_button("保存修改"):
-                        if update_user_profile(u, new_u, new_p if new_p else None, new_n): st.success("资料已更新"); time.sleep(1); st.rerun()
-                        else: st.error("更新失败")
-                st.markdown("---")
-                st.markdown("**危险操作**")
-                if st.button("删除账号并回收任务"): delete_user_and_recycle(u); st.rerun()
-
 # --- 📥 IMPORT (Admin) ---
 elif selected_nav == "Import":
     pool = get_public_pool_count()
@@ -883,7 +824,7 @@ elif selected_nav == "Import":
                 
                 # 🔥 分支逻辑：强行入库 vs 正常验证
                 if force_import:
-                    s.write("⚠️ 已跳过验证，所有号码视为有效...")
+                    s.write("已跳过验证，所有号码视为有效...")
                     valid = plist
                 else:
                     for i in range(0, len(plist), 500):
@@ -892,7 +833,7 @@ elif selected_nav == "Import":
                         
                         # 如果 API 报错，显示红字
                         if err != "Success" and err != "Empty List":
-                            s.write(f"❌ 验证失败 ({err})，请尝试勾选“跳过验证”重试。")
+                            s.write(f"验证失败 ({err})，请尝试勾选“跳过验证”重试。")
                             # 不中断，继续跑完
                         
                         valid.extend([p for p in batch if res.get(p)=='valid'])
@@ -904,7 +845,13 @@ elif selected_nav == "Import":
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
                     rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":None, "retry_count": 0, "is_frozen": False, "error_log": None})
-                    if len(rows)>=100: admin_bulk_upload_to_pool(rows); rows=[]
-                if rows: admin_bulk_upload_to_pool(rows)
-                s.update(label="入库完成", state="complete")
+                    if len(rows)>=100: 
+                        success, msg = admin_bulk_upload_to_pool(rows)
+                        if not success: s.write(f"入库失败: {msg}")
+                        rows=[]
+                if rows: 
+                    success, msg = admin_bulk_upload_to_pool(rows)
+                    if not success: s.write(f"入库失败: {msg}")
+                    
+                s.update(label="操作完成", state="complete")
             time.sleep(1); st.rerun()
