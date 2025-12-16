@@ -255,13 +255,15 @@ def delete_user_and_recycle(username):
         return True
     except: return False
 
+# 🔥 核心修复：键名统一 (KeyError Fix)
 def admin_bulk_upload_to_pool(rows_to_insert):
     if not supabase or not rows_to_insert: return 0, "No data to insert"
     success_count = 0
+    
+    # 统一使用 'phone' 作为键名
     incoming_phones = [str(r['phone']) for r in rows_to_insert]
     
     try:
-        # DB Deduplication
         existing_phones = set()
         chunk_size = 500
         for i in range(0, len(incoming_phones), chunk_size):
@@ -275,29 +277,25 @@ def admin_bulk_upload_to_pool(rows_to_insert):
         if not final_rows:
             return 0, f"所有 {len(rows_to_insert)} 个号码均已存在。"
         
-        # Batch Insert
         response = supabase.table('leads').insert(final_rows).execute()
         
-        # RLS Detector
         if len(response.data) == 0:
-            return 0, "⚠️ 数据库权限拒绝 (RLS Policy Blocking)。请检查 Supabase RLS 设置。"
+            return 0, "⚠️ 数据库权限拒绝 (RLS Policy Blocking)。"
             
         return len(response.data), "Success"
 
     except Exception as e:
-        # Fallback Sequential
         err_msg = str(e)
         for row in final_rows:
             try:
                 supabase.table('leads').insert(row).execute()
                 success_count += 1
-            except:
-                pass
+            except: pass
         
         if success_count > 0:
             return success_count, f"批量失败({err_msg[:20]}...)，逐条成功 {success_count} 个"
         else:
-            return 0, f"入库彻底失败: {err_msg}"
+            return 0, f"入库失败: {err_msg}"
 
 def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
@@ -371,12 +369,10 @@ def extract_all_numbers(row_series):
         if clean: candidates.append(clean)
     return list(set(candidates))
 
-# 🔥 核心修正：返回 raw_data 供诊断
 def process_checknumber_task(phone_list, api_key, user_id):
     if not phone_list: return {}, "Empty List", None
     status_map = {p: 'unknown' for p in phone_list}
     headers = {"X-API-Key": api_key}
-    
     try:
         files = {'file': ('input.txt', "\n".join(phone_list), 'text/plain')}
         resp = requests.post(CONFIG["CN_BASE_URL"], headers=headers, files=files, data={'user_id': user_id}, verify=False)
@@ -391,23 +387,14 @@ def process_checknumber_task(phone_list, api_key, user_id):
                     f = requests.get(result_url, verify=False)
                     try: df = pd.read_excel(io.BytesIO(f.content))
                     except: df = pd.read_csv(io.BytesIO(f.content))
-                    
-                    # 🔥 诊断点：将 API 返回的原始表格数据传回去
                     for _, r in df.iterrows():
-                        # 尝试所有可能的列名
-                        status_val = str(r.get('whatsapp') or r.get('status') or r.get('Status') or '').lower()
-                        
-                        # 寻找号码列
+                        ws = str(r.get('whatsapp') or r.get('status') or r.get('Status') or '').lower()
                         nm_col = next((c for c in df.columns if 'number' in c.lower() or 'phone' in c.lower()), None)
                         if nm_col:
                             nm = re.sub(r'\D', '', str(r[nm_col]))
-                            # 🔥 宽容匹配：只要包含肯定词汇就算过
-                            if any(x in status_val for x in ['yes', 'valid', 'active', 'true', 'ok']):
-                                status_map[nm] = 'valid'
-                            else:
-                                status_map[nm] = 'invalid'
-                    
-                    return status_map, "Success", df # 返回 DF 以供诊断
+                            if any(x in ws for x in ['yes', 'valid', 'active', 'true', 'ok']): status_map[nm] = 'valid'
+                            else: status_map[nm] = 'invalid'
+                    return status_map, "Success", df
         return status_map, "Timeout", None
     except Exception as e: return status_map, str(e), None
 
@@ -439,7 +426,6 @@ def check_api_health(cn_user, cn_key, openai_key):
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 JS 时钟
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -842,7 +828,7 @@ elif selected_nav == "Import":
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
                     # 🔥 核心修正：Msg 设为空字符串 ""
-                    rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":"", "retry_count": 0, "is_frozen": False, "error_log": None})
+                    rows.append({"shop_name":shp, "shop_link":lnk, "phone":p, "ai_message":"", "retry_count": 0, "is_frozen": False, "error_log": None})
                     if len(rows)>=100: 
                         count, msg = admin_bulk_upload_to_pool(rows)
                         if count == 0 and len(rows) > 0: s.write(f"⚠️ 批次警告: {msg}")
