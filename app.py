@@ -280,7 +280,7 @@ def admin_bulk_upload_to_pool(rows_to_insert):
         response = supabase.table('leads').insert(final_rows).execute()
         
         if len(response.data) == 0:
-            return 0, "⚠️ 数据库权限拒绝 (RLS Policy Blocking)。"
+            return 0, "⚠️ RLS 权限拒绝，请检查 Supabase 策略。"
             
         return len(response.data), "Success"
 
@@ -357,7 +357,7 @@ def get_daily_logs(query_date):
             df_done_summary = df_done.groupby('assigned_to').size().reset_index(name='实际处理')
         else: df_done_summary = pd.DataFrame(columns=['assigned_to', '实际处理'])
         return df_claim_summary, df_done_summary
-    except Exception: return pd.DataFrame(), pd.DataFrame() # 兜底防止崩溃
+    except Exception: return pd.DataFrame(), pd.DataFrame()
 
 def extract_all_numbers(row_series):
     txt = " ".join([str(val) for val in row_series if pd.notna(val)])
@@ -703,22 +703,26 @@ elif selected_nav == "WeChat":
                 except Exception as e: st.error(str(e))
     else:
         st.markdown("#### 微信维护助手")
-        wc_tasks = get_wechat_tasks(st.session_state['username'])
-        if not wc_tasks:
-            st.markdown("""<div class="custom-alert alert-info">今日无维护任务</div>""", unsafe_allow_html=True)
-        else:
-            st.markdown(f"**今日需维护：{len(wc_tasks)} 人**")
-            for task in wc_tasks:
-                with st.expander(f"客户编号：{task['customer_code']}", expanded=True):
-                    script = get_wechat_maintenance_script(client, task['customer_code'], st.session_state['username'])
-                    st.code(script, language="text")
-                    c1, c2 = st.columns([3, 1])
-                    with c1: st.caption(f"上次联系：{task['last_contact_date']}")
-                    with c2:
-                        if st.button("完成打卡", key=f"wc_done_{task['id']}"):
-                            complete_wechat_task(task['id'], task['cycle_days'], st.session_state['username'])
-                            st.toast(f"积分 +{CONFIG['POINTS_WECHAT_TASK']}")
-                            time.sleep(1); st.rerun()
+        # 🔥 FIX: 修复 Logs/Team 页面的空白问题，包裹在 try/except 中
+        try:
+            wc_tasks = get_wechat_tasks(st.session_state['username'])
+            if not wc_tasks:
+                st.markdown("""<div class="custom-alert alert-info">今日无维护任务</div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"**今日需维护：{len(wc_tasks)} 人**")
+                for task in wc_tasks:
+                    with st.expander(f"客户编号：{task['customer_code']}", expanded=True):
+                        script = get_wechat_maintenance_script(client, task['customer_code'], st.session_state['username'])
+                        st.code(script, language="text")
+                        c1, c2 = st.columns([3, 1])
+                        with c1: st.caption(f"上次联系：{task['last_contact_date']}")
+                        with c2:
+                            if st.button("完成打卡", key=f"wc_done_{task['id']}"):
+                                complete_wechat_task(task['id'], task['cycle_days'], st.session_state['username'])
+                                st.toast(f"积分 +{CONFIG['POINTS_WECHAT_TASK']}")
+                                time.sleep(1); st.rerun()
+        except Exception as e:
+            st.markdown(f"""<div class="custom-alert alert-error">数据加载失败: {str(e)} (请检查 RLS)</div>""", unsafe_allow_html=True)
 
 # --- 💼 WORKBENCH (Sales) ---
 elif selected_nav == "Workbench":
@@ -735,7 +739,7 @@ elif selected_nav == "Workbench":
         force_import = st.checkbox("跳过验证（强行入库）", help="如 API 故障，请勾选此项强制导入", key="force_import")
         
         if curr < total:
-            if st.button(f"领取任务 (余 {total-curr} 个)"):
+            if st.button(f"领取任务 (余 {total-curr})"):
                 _, status = claim_daily_tasks(st.session_state['username'], client)
                 if status=="empty": st.markdown("""<div class="custom-alert alert-error">公池已空</div>""", unsafe_allow_html=True)
                 else: st.rerun()
@@ -780,6 +784,72 @@ elif selected_nav == "Workbench":
     if not df_history.empty:
         st.dataframe(df_history, column_config={"shop_name": "客户店铺", "phone": "联系电话", "shop_link": st.column_config.LinkColumn("店铺链接"), "completed_at": st.column_config.DatetimeColumn("处理时间", format="YYYY-MM-DD HH:mm")}, use_container_width=True)
     else: st.caption("暂无历史记录")
+
+# --- 📅 LOGS (Admin) ---
+elif selected_nav == "Logs":
+    st.markdown("#### 活动日志监控")
+    d = st.date_input("选择日期", date.today())
+    
+    # 🔥 FIX: 修复 Logs 页面空白问题
+    try:
+        if d:
+            c, f = get_daily_logs(d.isoformat())
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("领取记录")
+                if not c.empty: st.dataframe(c, use_container_width=True)
+                else: st.markdown("""<div class="custom-alert alert-info">无数据</div>""", unsafe_allow_html=True)
+            with col2:
+                st.markdown("完成记录")
+                if not f.empty: st.dataframe(f, use_container_width=True)
+                else: st.markdown("""<div class="custom-alert alert-info">无数据</div>""", unsafe_allow_html=True)
+    except Exception as e:
+        st.markdown(f"""<div class="custom-alert alert-error">日志加载失败: {str(e)}</div>""", unsafe_allow_html=True)
+
+# --- 👥 TEAM (Admin) ---
+elif selected_nav == "Team":
+    # 🔥 FIX: 修复 Team 页面空白问题
+    try:
+        users = pd.DataFrame(supabase.table('users').select("*").neq('role', 'admin').execute().data)
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            if not users.empty: u = st.radio("员工列表", users['username'].tolist(), label_visibility="collapsed")
+            else: u = None; st.markdown("""<div class="custom-alert alert-info">暂无员工</div>""", unsafe_allow_html=True)
+            st.markdown("---")
+            with st.expander("新增员工"):
+                with st.form("new"):
+                    nu = st.text_input("用户名"); np = st.text_input("密码", type="password"); nn = st.text_input("真实姓名")
+                    if st.form_submit_button("创建账号"): create_user(nu, np, nn); st.rerun()
+        with c2:
+            if u:
+                info = users[users['username']==u].iloc[0]
+                tc, td, hist = get_user_historical_data(u)
+                perf = get_user_daily_performance(u)
+                st.markdown(f"### {info['real_name']}")
+                st.caption(f"账号: {info['username']} | 积分: {info.get('points', 0)} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
+                k1, k2 = st.columns(2)
+                k1.metric("历史总领取", tc); k2.metric("历史总完成", td)
+                t1, t2, t3 = st.tabs(["每日绩效", "详细清单", "账号设置"])
+                with t1:
+                    if not perf.empty: st.bar_chart(perf); st.dataframe(perf, use_container_width=True)
+                    else: st.caption("暂无数据")
+                with t2:
+                    if not hist.empty: st.dataframe(hist, use_container_width=True)
+                    else: st.caption("暂无数据")
+                with t3:
+                    st.markdown("**修改资料**")
+                    with st.form("edit_user"):
+                        new_u = st.text_input("新用户名 (留空则不改)", value=u)
+                        new_n = st.text_input("新真实姓名 (留空则不改)", value=info['real_name'])
+                        new_p = st.text_input("新密码 (留空则不改)", type="password")
+                        if st.form_submit_button("保存修改"):
+                            if update_user_profile(u, new_u, new_p if new_p else None, new_n): st.success("资料已更新"); time.sleep(1); st.rerun()
+                            else: st.error("更新失败")
+                    st.markdown("---")
+                    st.markdown("**危险操作**")
+                    if st.button("删除账号并回收任务"): delete_user_and_recycle(u); st.rerun()
+    except Exception as e:
+        st.markdown(f"""<div class="custom-alert alert-error">无法读取团队数据: {str(e)} <br>请确认已执行 SQL: ALTER TABLE users DISABLE ROW LEVEL SECURITY;</div>""", unsafe_allow_html=True)
 
 # --- 📥 IMPORT (Admin) ---
 elif selected_nav == "Import":
