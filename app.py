@@ -12,8 +12,7 @@ import hashlib
 import random
 from datetime import date, datetime, timedelta
 import concurrent.futures
-# 🔥 引入组件库，这是修复时钟的关键
-import streamlit.components.v1 as components 
+import streamlit.components.v1 as components
 
 try:
     from supabase import create_client, Client
@@ -37,7 +36,7 @@ CONFIG = {
 }
 
 # ==========================================
-# ☁️ 数据库与核心逻辑 (保持不变)
+# ☁️ 数据库与核心逻辑
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -335,41 +334,62 @@ def extract_all_numbers(row_series):
     matches = re.findall(r'(?:^|\D)([789][\d\s\-\(\)]{9,16})(?:\D|$)', txt)
     candidates = []
     for raw in matches:
+        # 🔥 俄罗斯号码智能清洗
         d = re.sub(r'\D', '', raw)
         clean = None
         if len(d) == 11:
-            if d.startswith('7'): clean = d
-            elif d.startswith('8'): clean = '7' + d[1:]
-        elif len(d) == 10 and d.startswith('9'): clean = '7' + d
+            if d.startswith('7'): clean = d # 7xxxxxxxxxx OK
+            elif d.startswith('8'): clean = '7' + d[1:] # 8xxxxxxxxxx -> 7xxxxxxxxxx
+        elif len(d) == 10 and d.startswith('9'): 
+            clean = '7' + d # 9xxxxxxxxx -> 79xxxxxxxxx
+        
         if clean: candidates.append(clean)
     return list(set(candidates))
 
 def process_checknumber_task(phone_list, api_key, user_id):
-    if not phone_list: return {}
+    if not phone_list: return {}, "Empty List"
     status_map = {p: 'unknown' for p in phone_list}
     headers = {"X-API-Key": api_key}
+    
+    # 诊断信息
+    diag_info = ""
+    
     try:
         files = {'file': ('input.txt', "\n".join(phone_list), 'text/plain')}
         resp = requests.post(CONFIG["CN_BASE_URL"], headers=headers, files=files, data={'user_id': user_id}, verify=False)
-        if resp.status_code != 200: return status_map
+        
+        if resp.status_code != 200:
+            return status_map, f"API Upload Error: {resp.status_code} - {resp.text}"
+            
         task_id = resp.json().get("task_id")
+        if not task_id:
+            return status_map, "No Task ID returned"
+
+        # 轮询
         for i in range(60): 
             time.sleep(2)
             poll = requests.get(f"{CONFIG['CN_BASE_URL']}/{task_id}", headers=headers, params={'user_id': user_id}, verify=False)
-            if poll.json().get("status") in ["exported", "completed"]:
+            status = poll.json().get("status")
+            
+            if status in ["exported", "completed"]:
                 result_url = poll.json().get("result_url")
                 if result_url:
                     f = requests.get(result_url, verify=False)
                     try: df = pd.read_excel(io.BytesIO(f.content))
                     except: df = pd.read_csv(io.BytesIO(f.content))
+                    
                     for _, r in df.iterrows():
                         ws = str(r.get('whatsapp') or r.get('status') or '').lower()
-                        nm = re.sub(r'\D', '', str(r.get('number') or r.get('phone') or ''))
-                        if "yes" in ws or "valid" in ws: status_map[nm] = 'valid'
-                        else: status_map[nm] = 'invalid'
-                break
-    except: pass
-    return status_map
+                        # 兼容不同列名
+                        nm_col = next((c for c in df.columns if 'number' in c.lower() or 'phone' in c.lower()), None)
+                        if nm_col:
+                            nm = re.sub(r'\D', '', str(r[nm_col]))
+                            if "yes" in ws or "valid" in ws: status_map[nm] = 'valid'
+                            else: status_map[nm] = 'invalid'
+                return status_map, "Success"
+        return status_map, "Timeout"
+    except Exception as e:
+        return status_map, str(e)
 
 def check_api_health(cn_user, cn_key, openai_key):
     status = {"supabase": False, "checknumber": False, "openai": False, "msg": []}
@@ -395,36 +415,11 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🎨 UI 主题 (Ultimate Clean & Dark)
+# 🎨 UI 主题
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 核心修复：使用 components.html 注入 JS，彻底解决 Streamlit 不执行 Script 的问题
-# height=0 隐藏 iframe，但 JS 依然执行
-components.html("""
-    <script>
-        // 定义更新时钟的函数
-        function updateClock() {
-            var now = new Date();
-            var timeStr = now.getFullYear() + "/" + 
-                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
-                       String(now.getDate()).padStart(2, '0') + " " + 
-                       String(now.getHours()).padStart(2, '0') + ":" + 
-                       String(now.getMinutes()).padStart(2, '0');
-            
-            // 关键点：穿透 iframe，去父页面找 ID
-            var clock = window.parent.document.getElementById('clock-container');
-            if (clock) {
-                clock.innerHTML = timeStr;
-                clock.style.animation = "fadeIn 1s ease"; // 加个淡入动画证明我活着
-            }
-        }
-        // 疯狂轮询，确保父页面渲染出来后能立马找到
-        setInterval(updateClock, 100);
-    </script>
-""", height=0)
-
-# 放置时钟 HTML 占位符 (在主页面)
+# 🔥 核心修复：时钟+CSS+JS 一体化注入 (Z-Index 99999 + Brute Force Update)
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -432,8 +427,28 @@ st.markdown("""
     z-index: 999999; background: rgba(0,0,0,0.5); padding: 6px 20px; border-radius: 30px;
     backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1);
     box-shadow: 0 4px 10px rgba(0,0,0,0.2); pointer-events: none; letter-spacing: 1px;
-    font-weight: 500; transition: all 0.3s ease;
+    font-weight: 500;
 ">Initialize...</div>
+
+<script>
+// 暴力轮询时钟 v92.0
+(function() {
+    function updateClock() {
+        var clock = document.getElementById('clock-container');
+        if (clock) {
+            var now = new Date();
+            var timeStr = now.getFullYear() + "/" + 
+                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
+                       String(now.getDate()).padStart(2, '0') + " " + 
+                       String(now.getHours()).padStart(2, '0') + ":" + 
+                       String(now.getMinutes()).padStart(2, '0');
+            clock.innerHTML = timeStr;
+        }
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+})();
+</script>
 
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -520,7 +535,7 @@ st.markdown("""
     div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
     
     /* 按钮 */
-    button { color: var(--btn-text) !important; }
+    button { color: var(--btn-text) !important; text-shadow: none !important; }
     div.stButton > button, div.stFormSubmitButton > button { 
         background: var(--btn-primary) !important; color: var(--btn-text) !important; 
         border: none !important; border-radius: 50px !important; padding: 10px 24px !important; 
@@ -732,6 +747,9 @@ elif selected_nav == "Workbench":
         st.progress(min(done/total, 1.0))
     with c_action:
         st.markdown("<br>", unsafe_allow_html=True)
+        # 🔥 增加“跳过验证”开关
+        force_import = st.checkbox("跳过验证（强行入库）", help="如果 API 故障，勾选此项强制导入所有号码", key="force_import")
+        
         if curr < total:
             if st.button(f"领取任务 (余 {total-curr})"):
                 _, status = claim_daily_tasks(st.session_state['username'], client)
@@ -847,6 +865,10 @@ elif selected_nav == "Import":
             
     st.markdown("---")
     st.markdown("#### 批量进货")
+    
+    # 🔥 增加“强行入库”开关 (Fail-Safe)
+    force_import = st.checkbox("跳过 WhatsApp 验证 (强行入库)", help="如 API 故障，请勾选此项强制导入", key="force_import_admin")
+
     f = st.file_uploader("上传文件 (CSV/Excel)", type=['csv', 'xlsx'])
     if f:
         df = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
@@ -858,11 +880,26 @@ elif selected_nav == "Import":
                     for p in extract_all_numbers(r): phones.add(p); rmap.setdefault(p, []).append(i)
                 s.write(f"提取到 {len(phones)} 个独立号码")
                 plist = list(phones); valid = []
-                for i in range(0, len(plist), 500):
-                    batch = plist[i:i+500]; res = process_checknumber_task(batch, CN_KEY, CN_USER)
-                    valid.extend([p for p in batch if res.get(p)=='valid']); time.sleep(1)
                 
-                s.write(f"有效号码 {len(valid)} 个，正在存入公池...")
+                # 🔥 分支逻辑：强行入库 vs 正常验证
+                if force_import:
+                    s.write("⚠️ 已跳过验证，所有号码视为有效...")
+                    valid = plist
+                else:
+                    for i in range(0, len(plist), 500):
+                        batch = plist[i:i+500]
+                        res, err = process_checknumber_task(batch, CN_KEY, CN_USER)
+                        
+                        # 如果 API 报错，显示红字
+                        if err != "Success" and err != "Empty List":
+                            s.write(f"❌ 验证失败 ({err})，请尝试勾选“跳过验证”重试。")
+                            # 不中断，继续跑完
+                        
+                        valid.extend([p for p in batch if res.get(p)=='valid'])
+                        time.sleep(1)
+                
+                s.write(f"最终有效入库: {len(valid)} 个")
+                
                 rows = []
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
