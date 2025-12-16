@@ -227,7 +227,6 @@ def get_user_historical_data(username):
 def get_public_pool_count():
     if not supabase: return 0
     try:
-        # 🔥 修正：更宽容的查询，防止因 NULL 问题漏统计
         res = supabase.table('leads').select('id', count='exact').is_('assigned_to', 'null').execute()
         return res.count
     except: return 0
@@ -256,37 +255,31 @@ def delete_user_and_recycle(username):
         return True
     except: return False
 
-# 🔥 核心修复：Python 侧去重 + 显性报错
+# 🔥 核心修复：移除所有预检，采用 批量尝试 -> 失败 -> 逐个重试 策略
 def admin_bulk_upload_to_pool(rows_to_insert):
     if not supabase or not rows_to_insert: return 0, "No data"
     
+    success_count = 0
+    
+    # 1. 尝试暴力批量插入 (最快)
+    # 如果所有号码都是新的，这里直接会成功
     try:
-        # 1. 提取所有待插入的号码
-        new_phones = [r['phone'] for r in rows_to_insert]
-        
-        # 2. 从数据库查询这些号码是否已存在 (分批查询以防 URL 过长)
-        existing_phones = set()
-        chunk_size = 500
-        for i in range(0, len(new_phones), chunk_size):
-            batch = new_phones[i:i+chunk_size]
-            res = supabase.table('leads').select('phone').in_('phone', batch).execute()
-            for item in res.data:
-                existing_phones.add(item['phone'])
-        
-        # 3. 过滤出真正的新号码
-        final_rows = [r for r in rows_to_insert if r['phone'] not in existing_phones]
-        
-        if not final_rows:
-            return 0, "所有号码均已存在，无需入库"
-        
-        # 4. 执行插入 (使用纯 Insert，不再 Upsert)
-        # 只要有一条失败，就会抛出异常，前端能看到
-        supabase.table('leads').insert(final_rows).execute()
-        
-        return len(final_rows), "Success"
-
-    except Exception as e:
-        return 0, f"DB Error: {str(e)}"
+        supabase.table('leads').insert(rows_to_insert).execute()
+        return len(rows_to_insert), "Batch Success"
+    except Exception:
+        # 2. 如果批量失败（说明有重复键或数据问题），启动“逐个重试”模式 (Fail-Safe)
+        error_count = 0
+        for row in rows_to_insert:
+            try:
+                # 尝试插入单条
+                supabase.table('leads').insert(row).execute()
+                success_count += 1
+            except Exception:
+                # 再次失败，说明这条确实是重复的，跳过
+                error_count += 1
+                continue
+                
+        return success_count, f"Mixed: {success_count} inserted, {error_count} duplicates/errors"
 
 def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
@@ -295,8 +288,6 @@ def claim_daily_tasks(username, client):
     
     if current_count >= CONFIG["DAILY_QUOTA"]: return existing, "full"
     needed = CONFIG["DAILY_QUOTA"] - current_count
-    
-    # 修改：只取未分配 且 未冻结的任务
     pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').eq('is_frozen', False).limit(needed).execute().data
     
     if pool_leads:
@@ -417,7 +408,6 @@ def check_api_health(cn_user, cn_key, openai_key):
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 核心修复：时钟+CSS+JS 一体化注入 (Z-Index 99999 + Brute Force Update)
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -429,7 +419,6 @@ st.markdown("""
 ">Initialize...</div>
 
 <script>
-// 暴力轮询时钟 v96.0
 (function() {
     function updateClock() {
         var clock = document.getElementById('clock-container');
@@ -461,7 +450,7 @@ st.markdown("""
         --btn-text: #ffffff;
     }
 
-    /* 1. ⚛️ 全局去黑框 & 字体平滑 */
+    /* 全局去黑框 */
     * {
         text-shadow: none !important;
         -webkit-text-stroke: 0px !important;
@@ -469,7 +458,7 @@ st.markdown("""
         -webkit-font-smoothing: antialiased !important;
     }
 
-    /* 2. 🌌 强制深色背景 (穿透修复白屏) */
+    /* 强制深色背景 */
     .stApp, [data-testid="stAppViewContainer"] {
         background-color: #09090b !important;
         background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%) !important;
@@ -477,102 +466,54 @@ st.markdown("""
         font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
     }
     
-    /* 3. 🌠 流光动画 (不遮挡) */
+    /* 流光动画 */
     [data-testid="stAppViewContainer"]::after {
-        content: "";
-        position: fixed;
-        top: 0; left: 0; width: 100%; height: 100%;
+        content: ""; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
         background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.03) 50%, transparent 60%);
-        background-size: 200% 100%;
-        animation: shimmer 8s infinite linear;
-        pointer-events: none;
-        z-index: 0;
+        background-size: 200% 100%; animation: shimmer 8s infinite linear;
+        pointer-events: none; z-index: 0;
     }
-    
-    @keyframes shimmer {
-        0% { background-position: 200% 0; }
-        100% { background-position: -200% 0; }
-    }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-    /* 4. 强制头部透明 */
-    [data-testid="stHeader"] {
-        background-color: transparent !important;
-    }
+    [data-testid="stHeader"] { background-color: transparent !important; }
+    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] { background-color: transparent !important; }
 
-    /* 5. 内容文字背景透明 */
-    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] {
-        background-color: transparent !important;
-    }
-
-    /* 标题 */
-    .gemini-header {
-        font-weight: 600; font-size: 28px;
-        background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        letter-spacing: 1px; margin-bottom: 5px;
-    }
+    /* UI 组件样式 */
+    .gemini-header { font-weight: 600; font-size: 28px; background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 1px; margin-bottom: 5px; }
     .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
+    .points-pill { background-color: rgba(255, 255, 255, 0.05) !important; color: #e3e3e3; border: 1px solid rgba(255, 255, 255, 0.1); padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace; }
 
-    /* 积分 */
-    .points-pill {
-        background-color: rgba(255, 255, 255, 0.05) !important; color: #e3e3e3; 
-        border: 1px solid rgba(255, 255, 255, 0.1); padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace;
-    }
-
-    /* 导航 */
     div[data-testid="stRadio"] > div { background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
     div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
 
-    /* 容器 (磨砂) */
-    div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { 
-        background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.08) !important; border-radius: 12px; padding: 15px; 
-    }
+    div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08) !important; border-radius: 12px; padding: 15px; }
     div[data-testid="stExpander"] details { border: none !important; }
     div[data-testid="stExpander"] summary { color: white !important; background-color: transparent !important; }
     div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
     
-    /* 按钮 */
     button { color: var(--btn-text) !important; }
-    div.stButton > button, div.stFormSubmitButton > button { 
-        background: var(--btn-primary) !important; color: var(--btn-text) !important; 
-        border: none !important; border-radius: 50px !important; padding: 10px 24px !important; 
-        font-weight: 600; letter-spacing: 1px; transition: all 0.2s ease; 
-        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2) !important;
-    }
-    div.stButton > button:hover, div.stFormSubmitButton > button:hover { 
-        transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important;
-    }
+    div.stButton > button, div.stFormSubmitButton > button { background: var(--btn-primary) !important; color: var(--btn-text) !important; border: none !important; border-radius: 50px !important; padding: 10px 24px !important; font-weight: 600; letter-spacing: 1px; transition: all 0.2s ease; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2) !important; }
+    div.stButton > button:hover, div.stFormSubmitButton > button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important; }
 
-    /* 输入框 */
-    div[data-baseweb="input"], div[data-baseweb="select"] { 
-        background-color: rgba(45, 46, 51, 0.8) !important; border: 1px solid #444 !important; 
-        border-radius: 8px !important; color: white !important;
-    }
+    div[data-baseweb="input"], div[data-baseweb="select"] { background-color: rgba(45, 46, 51, 0.8) !important; border: 1px solid #444 !important; border-radius: 8px !important; color: white !important; }
     input { color: white !important; caret-color: #6366f1; background-color: transparent !important; }
     ::placeholder { color: #5f6368 !important; }
     
-    /* 上传 */
     [data-testid="stFileUploader"] { background-color: transparent !important; }
     [data-testid="stFileUploader"] section { background-color: rgba(45, 46, 51, 0.5) !important; border: 1px dashed #555 !important; }
     [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; }
     
-    /* 提示条 */
-    .custom-alert {
-        padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; color: #e3e3e3; display: flex; align-items: center;
-        background-color: rgba(255, 255, 255, 0.05); border: 1px solid #444;
-    }
+    .custom-alert { padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; color: #e3e3e3; display: flex; align-items: center; background-color: rgba(255, 255, 255, 0.05); border: 1px solid #444; }
     .alert-error { background-color: rgba(255, 85, 70, 0.15) !important; border-color: #ff5f56 !important; color: #ff5f56 !important; }
     .alert-success { background-color: rgba(63, 185, 80, 0.15) !important; border-color: #3fb950 !important; color: #3fb950 !important; }
     .alert-info { background-color: rgba(56, 139, 253, 0.15) !important; border-color: #58a6ff !important; color: #58a6ff !important; }
 
-    /* 表格 */
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: rgba(30, 31, 32, 0.6) !important; color: var(--text-secondary); }
     .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
     
     h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
     .stCaption { color: #8e8e8e !important; }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -846,12 +787,12 @@ elif selected_nav == "Import":
                     r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
                     rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":None, "retry_count": 0, "is_frozen": False, "error_log": None})
                     if len(rows)>=100: 
-                        success, msg = admin_bulk_upload_to_pool(rows)
-                        if not success: s.write(f"入库失败: {msg}")
+                        count, msg = admin_bulk_upload_to_pool(rows)
+                        if count == 0 and len(rows) > 0: s.write(f"⚠️ 批次警告: {msg}")
                         rows=[]
                 if rows: 
-                    success, msg = admin_bulk_upload_to_pool(rows)
-                    if not success: s.write(f"入库失败: {msg}")
+                    count, msg = admin_bulk_upload_to_pool(rows)
+                    if count == 0 and len(rows) > 0: s.write(f"⚠️ 批次警告: {msg}")
                     
                 s.update(label="操作完成", state="complete")
             time.sleep(1); st.rerun()
