@@ -12,6 +12,7 @@ import hashlib
 import random
 from datetime import date, datetime, timedelta
 import concurrent.futures
+# 🔥 必须引入组件库
 import streamlit.components.v1 as components
 
 try:
@@ -23,8 +24,11 @@ except ImportError:
 warnings.filterwarnings("ignore")
 
 # ==========================================
-# 🔧 系统配置
+# 🎨 UI 主题 & 核心配置 (置顶加载)
 # ==========================================
+st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
+
+# 🔧 系统配置
 CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
     "DAILY_QUOTA": 25,
@@ -34,6 +38,121 @@ CONFIG = {
     "MAX_RETRIES": 3,
     "AI_MODEL": "gpt-4o-mini"
 }
+
+# 🔥🔥🔥 核心修复：时钟代码置顶 (Priority Injection) 🔥🔥🔥
+# 1. 放置 HTML 占位符
+st.markdown("""
+<div id="clock-container" style="
+    position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
+    font-family: 'Inter', monospace; font-size: 15px; color: rgba(255,255,255,0.9);
+    z-index: 999999; background: rgba(0,0,0,0.6); padding: 6px 20px; border-radius: 30px;
+    backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.15);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3); pointer-events: none; letter-spacing: 1px;
+    font-weight: 600; text-shadow: none;
+">Initialize...</div>
+""", unsafe_allow_html=True)
+
+# 2. 注入 CSS (暗黑流光 + 去黑框)
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
+
+    :root {
+        --text-primary: #e3e3e3;
+        --text-secondary: #8e8e8e;
+        --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
+        --btn-primary: linear-gradient(90deg, #6366f1, #818cf8);
+        --btn-hover: linear-gradient(90deg, #818cf8, #a5b4fc);
+        --btn-text: #ffffff;
+    }
+
+    /* 全局去黑框 & 字体平滑 */
+    * {
+        text-shadow: none !important;
+        -webkit-text-stroke: 0px !important;
+        box-shadow: none !important;
+        -webkit-font-smoothing: antialiased !important;
+    }
+
+    /* 强制深色背景 + 流光 */
+    .stApp, [data-testid="stAppViewContainer"] {
+        background-color: #09090b !important;
+        background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%) !important;
+        color: var(--text-primary) !important;
+        font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
+    }
+    
+    /* 流光动画层 (z-index: 0 不遮挡内容) */
+    [data-testid="stAppViewContainer"]::after {
+        content: ""; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.03) 50%, transparent 60%);
+        background-size: 200% 100%; animation: shimmer 8s infinite linear;
+        pointer-events: none; z-index: 0;
+    }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+    /* 强制头部透明 */
+    [data-testid="stHeader"] { background-color: transparent !important; }
+    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] { background-color: transparent !important; }
+
+    /* UI 组件样式 */
+    .gemini-header { font-weight: 600; font-size: 28px; background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 1px; margin-bottom: 5px; }
+    .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
+    .points-pill { background-color: rgba(255, 255, 255, 0.05) !important; color: #e3e3e3; border: 1px solid rgba(255, 255, 255, 0.1); padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace; }
+
+    div[data-testid="stRadio"] > div { background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
+    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
+    div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
+
+    div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08) !important; border-radius: 12px; padding: 15px; }
+    div[data-testid="stExpander"] details { border: none !important; }
+    div[data-testid="stExpander"] summary { color: white !important; background-color: transparent !important; }
+    div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
+    
+    button { color: var(--btn-text) !important; }
+    div.stButton > button, div.stFormSubmitButton > button { background: var(--btn-primary) !important; color: var(--btn-text) !important; border: none !important; border-radius: 50px !important; padding: 10px 24px !important; font-weight: 600; letter-spacing: 1px; transition: all 0.2s ease; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2) !important; }
+    div.stButton > button:hover, div.stFormSubmitButton > button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important; }
+
+    div[data-baseweb="input"], div[data-baseweb="select"] { background-color: rgba(45, 46, 51, 0.8) !important; border: 1px solid #444 !important; border-radius: 8px !important; color: white !important; }
+    input { color: white !important; caret-color: #6366f1; background-color: transparent !important; }
+    ::placeholder { color: #5f6368 !important; }
+    
+    [data-testid="stFileUploader"] { background-color: transparent !important; }
+    [data-testid="stFileUploader"] section { background-color: rgba(45, 46, 51, 0.5) !important; border: 1px dashed #555 !important; }
+    [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; }
+    
+    .custom-alert { padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; color: #e3e3e3; display: flex; align-items: center; background-color: rgba(255, 255, 255, 0.05); border: 1px solid #444; }
+    .alert-error { background-color: rgba(255, 85, 70, 0.15) !important; border-color: #ff5f56 !important; color: #ff5f56 !important; }
+    .alert-success { background-color: rgba(63, 185, 80, 0.15) !important; border-color: #3fb950 !important; color: #3fb950 !important; }
+    .alert-info { background-color: rgba(56, 139, 253, 0.15) !important; border-color: #58a6ff !important; color: #58a6ff !important; }
+
+    div[data-testid="stDataFrame"] div[role="grid"] { background-color: rgba(30, 31, 32, 0.6) !important; color: var(--text-secondary); }
+    .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
+    h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
+    .stCaption { color: #8e8e8e !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# 3. 注入 JS (穿透 iframe，暴力轮询)
+components.html("""
+    <script>
+        function updateClock() {
+            var now = new Date();
+            var timeStr = now.getFullYear() + "/" + 
+                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
+                       String(now.getDate()).padStart(2, '0') + " " + 
+                       String(now.getHours()).padStart(2, '0') + ":" + 
+                       String(now.getMinutes()).padStart(2, '0');
+            
+            // 穿透寻找父页面的元素
+            var clock = window.parent.document.getElementById('clock-container');
+            if (clock) { clock.innerHTML = timeStr; }
+        }
+        setInterval(updateClock, 1000);
+    </script>
+""", height=0)
+
 
 # ==========================================
 # ☁️ 数据库与核心逻辑
@@ -261,6 +380,7 @@ def admin_bulk_upload_to_pool(rows_to_insert):
     incoming_phones = [str(r['phone']) for r in rows_to_insert]
     
     try:
+        # DB 去重
         existing_phones = set()
         chunk_size = 500
         for i in range(0, len(incoming_phones), chunk_size):
@@ -274,6 +394,7 @@ def admin_bulk_upload_to_pool(rows_to_insert):
         if not final_rows:
             return 0, f"所有 {len(rows_to_insert)} 个号码均已存在。"
         
+        # 🔥 强制填入 username 防止报错
         for row in final_rows:
             row['username'] = st.session_state.get('username', 'admin') 
 
@@ -294,7 +415,7 @@ def admin_bulk_upload_to_pool(rows_to_insert):
             except: pass
         
         if success_count > 0:
-            return success_count, f"批量失败({err_msg[:20]}...)，逐条成功 {success_count} 个"
+            return success_count, f"批量失败，逐条成功 {success_count} 个"
         else:
             return 0, f"入库失败: {err_msg}"
 
@@ -424,143 +545,6 @@ def check_api_health(cn_user, cn_key, openai_key):
             status["openai"] = True
     except Exception as e: status["msg"].append(f"OpenAI: {str(e)}")
     return status
-
-# ==========================================
-# 🎨 UI 主题
-# ==========================================
-st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
-
-# 🔥 核心修复：时钟+CSS+JS 一体化注入 (Z-Index 99999 + Brute Force Update)
-st.markdown("""
-<div id="clock-container" style="
-    position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
-    font-family: 'Inter', monospace; font-size: 15px; color: rgba(255,255,255,0.85);
-    z-index: 999999; background: rgba(0,0,0,0.5); padding: 6px 20px; border-radius: 30px;
-    backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1);
-    box-shadow: 0 4px 10px rgba(0,0,0,0.2); pointer-events: none; letter-spacing: 1px;
-    font-weight: 500;
-">Initialize...</div>
-
-<script>
-(function() {
-    function updateClock() {
-        var clock = document.getElementById('clock-container');
-        if (clock) {
-            var now = new Date();
-            var timeStr = now.getFullYear() + "/" + 
-                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
-                       String(now.getDate()).padStart(2, '0') + " " + 
-                       String(now.getHours()).padStart(2, '0') + ":" + 
-                       String(now.getMinutes()).padStart(2, '0');
-            clock.innerHTML = timeStr;
-        }
-    }
-    updateClock();
-    setInterval(updateClock, 1000);
-})();
-</script>
-
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
-
-    :root {
-        --text-primary: #e3e3e3;
-        --text-secondary: #8e8e8e;
-        --accent-gradient: linear-gradient(90deg, #4b90ff, #ff5546); 
-        --btn-primary: linear-gradient(90deg, #6366f1, #818cf8);
-        --btn-hover: linear-gradient(90deg, #818cf8, #a5b4fc);
-        --btn-text: #ffffff;
-    }
-
-    * {
-        text-shadow: none !important;
-        -webkit-text-stroke: 0px !important;
-        box-shadow: none !important;
-        -webkit-font-smoothing: antialiased !important;
-    }
-
-    .stApp, [data-testid="stAppViewContainer"] {
-        background-color: #09090b !important;
-        background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%) !important;
-        color: var(--text-primary) !important;
-        font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
-    }
-    
-    [data-testid="stAppViewContainer"]::after {
-        content: ""; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.03) 50%, transparent 60%);
-        background-size: 200% 100%; animation: shimmer 8s infinite linear;
-        pointer-events: none; z-index: 0;
-    }
-    
-    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-
-    [data-testid="stHeader"] { background-color: transparent !important; }
-    p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] { background-color: transparent !important; }
-
-    .gemini-header {
-        font-weight: 600; font-size: 28px;
-        background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        letter-spacing: 1px; margin-bottom: 5px;
-    }
-    .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
-
-    .points-pill {
-        background-color: rgba(255, 255, 255, 0.05) !important; color: #e3e3e3; 
-        border: 1px solid rgba(255, 255, 255, 0.1); padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace;
-    }
-
-    div[data-testid="stRadio"] > div { background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
-    div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
-    div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
-
-    div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { 
-        background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.08) !important; border-radius: 12px; padding: 15px; 
-    }
-    div[data-testid="stExpander"] details { border: none !important; }
-    div[data-testid="stExpander"] summary { color: white !important; background-color: transparent !important; }
-    div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
-    
-    button { color: var(--btn-text) !important; }
-    div.stButton > button, div.stFormSubmitButton > button { 
-        background: var(--btn-primary) !important; color: var(--btn-text) !important; 
-        border: none !important; border-radius: 50px !important; padding: 10px 24px !important; 
-        font-weight: 600; letter-spacing: 1px; transition: all 0.2s ease; 
-        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2) !important;
-    }
-    div.stButton > button:hover, div.stFormSubmitButton > button:hover { 
-        transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important;
-    }
-
-    div[data-baseweb="input"], div[data-baseweb="select"] { 
-        background-color: rgba(45, 46, 51, 0.8) !important; border: 1px solid #444 !important; 
-        border-radius: 8px !important; color: white !important;
-    }
-    input { color: white !important; caret-color: #6366f1; background-color: transparent !important; }
-    ::placeholder { color: #5f6368 !important; }
-    
-    [data-testid="stFileUploader"] { background-color: transparent !important; }
-    [data-testid="stFileUploader"] section { background-color: rgba(45, 46, 51, 0.5) !important; border: 1px dashed #555 !important; }
-    [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; }
-    
-    .custom-alert {
-        padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; color: #e3e3e3; display: flex; align-items: center;
-        background-color: rgba(255, 255, 255, 0.05); border: 1px solid #444;
-    }
-    .alert-error { background-color: rgba(255, 85, 70, 0.15) !important; border-color: #ff5f56 !important; color: #ff5f56 !important; }
-    .alert-success { background-color: rgba(63, 185, 80, 0.15) !important; border-color: #3fb950 !important; color: #3fb950 !important; }
-    .alert-info { background-color: rgba(56, 139, 253, 0.15) !important; border-color: #58a6ff !important; color: #58a6ff !important; }
-
-    div[data-testid="stDataFrame"] div[role="grid"] { background-color: rgba(30, 31, 32, 0.6) !important; color: var(--text-secondary); }
-    .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
-    
-    h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
-    .stCaption { color: #8e8e8e !important; }
-
-</style>
-""", unsafe_allow_html=True)
 
 # ==========================================
 # 🔐 登录页
@@ -784,72 +768,6 @@ elif selected_nav == "Workbench":
     if not df_history.empty:
         st.dataframe(df_history, column_config={"shop_name": "客户店铺", "phone": "联系电话", "shop_link": st.column_config.LinkColumn("店铺链接"), "completed_at": st.column_config.DatetimeColumn("处理时间", format="YYYY-MM-DD HH:mm")}, use_container_width=True)
     else: st.caption("暂无历史记录")
-
-# --- 📅 LOGS (Admin) ---
-elif selected_nav == "Logs":
-    st.markdown("#### 活动日志监控")
-    d = st.date_input("选择日期", date.today())
-    
-    # 🔥 FIX: 修复 Logs 页面空白问题
-    try:
-        if d:
-            c, f = get_daily_logs(d.isoformat())
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("领取记录")
-                if not c.empty: st.dataframe(c, use_container_width=True)
-                else: st.markdown("""<div class="custom-alert alert-info">无数据</div>""", unsafe_allow_html=True)
-            with col2:
-                st.markdown("完成记录")
-                if not f.empty: st.dataframe(f, use_container_width=True)
-                else: st.markdown("""<div class="custom-alert alert-info">无数据</div>""", unsafe_allow_html=True)
-    except Exception as e:
-        st.markdown(f"""<div class="custom-alert alert-error">日志加载失败: {str(e)}</div>""", unsafe_allow_html=True)
-
-# --- 👥 TEAM (Admin) ---
-elif selected_nav == "Team":
-    # 🔥 FIX: 修复 Team 页面空白问题
-    try:
-        users = pd.DataFrame(supabase.table('users').select("*").neq('role', 'admin').execute().data)
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            if not users.empty: u = st.radio("员工列表", users['username'].tolist(), label_visibility="collapsed")
-            else: u = None; st.markdown("""<div class="custom-alert alert-info">暂无员工</div>""", unsafe_allow_html=True)
-            st.markdown("---")
-            with st.expander("新增员工"):
-                with st.form("new"):
-                    nu = st.text_input("用户名"); np = st.text_input("密码", type="password"); nn = st.text_input("真实姓名")
-                    if st.form_submit_button("创建账号"): create_user(nu, np, nn); st.rerun()
-        with c2:
-            if u:
-                info = users[users['username']==u].iloc[0]
-                tc, td, hist = get_user_historical_data(u)
-                perf = get_user_daily_performance(u)
-                st.markdown(f"### {info['real_name']}")
-                st.caption(f"账号: {info['username']} | 积分: {info.get('points', 0)} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
-                k1, k2 = st.columns(2)
-                k1.metric("历史总领取", tc); k2.metric("历史总完成", td)
-                t1, t2, t3 = st.tabs(["每日绩效", "详细清单", "账号设置"])
-                with t1:
-                    if not perf.empty: st.bar_chart(perf); st.dataframe(perf, use_container_width=True)
-                    else: st.caption("暂无数据")
-                with t2:
-                    if not hist.empty: st.dataframe(hist, use_container_width=True)
-                    else: st.caption("暂无数据")
-                with t3:
-                    st.markdown("**修改资料**")
-                    with st.form("edit_user"):
-                        new_u = st.text_input("新用户名 (留空则不改)", value=u)
-                        new_n = st.text_input("新真实姓名 (留空则不改)", value=info['real_name'])
-                        new_p = st.text_input("新密码 (留空则不改)", type="password")
-                        if st.form_submit_button("保存修改"):
-                            if update_user_profile(u, new_u, new_p if new_p else None, new_n): st.success("资料已更新"); time.sleep(1); st.rerun()
-                            else: st.error("更新失败")
-                    st.markdown("---")
-                    st.markdown("**危险操作**")
-                    if st.button("删除账号并回收任务"): delete_user_and_recycle(u); st.rerun()
-    except Exception as e:
-        st.markdown(f"""<div class="custom-alert alert-error">无法读取团队数据: {str(e)} <br>请确认已执行 SQL: ALTER TABLE users DISABLE ROW LEVEL SECURITY;</div>""", unsafe_allow_html=True)
 
 # --- 📥 IMPORT (Admin) ---
 elif selected_nav == "Import":
