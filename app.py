@@ -12,6 +12,7 @@ import hashlib
 import random
 from datetime import date, datetime, timedelta
 import concurrent.futures
+# 🔥 引入组件库
 import streamlit.components.v1 as components
 
 try:
@@ -261,7 +262,6 @@ def admin_bulk_upload_to_pool(rows_to_insert):
     incoming_phones = [str(r['phone']) for r in rows_to_insert]
     
     try:
-        # DB 去重
         existing_phones = set()
         chunk_size = 500
         for i in range(0, len(incoming_phones), chunk_size):
@@ -276,8 +276,6 @@ def admin_bulk_upload_to_pool(rows_to_insert):
             return 0, f"所有 {len(rows_to_insert)} 个号码均已存在。"
         
         # 🔥 核心修复：强制注入 'username' 字段
-        # 很多 Supabase 表都有一个 'username' 非空列（用于记录创建者或所有者），
-        # 我们这里填入 'admin' 或当前操作者，以满足数据库约束。
         for row in final_rows:
             row['username'] = st.session_state.get('username', 'admin') 
 
@@ -290,10 +288,9 @@ def admin_bulk_upload_to_pool(rows_to_insert):
 
     except Exception as e:
         err_msg = str(e)
-        # 兜底逐条
         for row in final_rows:
             try:
-                row['username'] = st.session_state.get('username', 'admin') # 确保逐条也加了这个字段
+                row['username'] = st.session_state.get('username', 'admin') 
                 supabase.table('leads').insert(row).execute()
                 success_count += 1
             except: pass
@@ -432,7 +429,25 @@ def check_api_health(cn_user, cn_key, openai_key):
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 JS 时钟
+# 🔥 核心修复：components.html + 暴力轮询
+components.html("""
+    <script>
+        function updateClock() {
+            var now = new Date();
+            var timeStr = now.getFullYear() + "/" + 
+                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
+                       String(now.getDate()).padStart(2, '0') + " " + 
+                       String(now.getHours()).padStart(2, '0') + ":" + 
+                       String(now.getMinutes()).padStart(2, '0');
+            
+            // 穿透 Iframe 寻找父级元素
+            var clock = window.parent.document.getElementById('clock-container');
+            if (clock) { clock.innerHTML = timeStr; }
+        }
+        setInterval(updateClock, 1000);
+    </script>
+""", height=0)
+
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -442,25 +457,6 @@ st.markdown("""
     box-shadow: 0 4px 10px rgba(0,0,0,0.2); pointer-events: none; letter-spacing: 1px;
     font-weight: 500;
 ">Initialize...</div>
-
-<script>
-(function() {
-    function updateClock() {
-        var clock = document.getElementById('clock-container');
-        if (clock) {
-            var now = new Date();
-            var timeStr = now.getFullYear() + "/" + 
-                       String(now.getMonth() + 1).padStart(2, '0') + "/" + 
-                       String(now.getDate()).padStart(2, '0') + " " + 
-                       String(now.getHours()).padStart(2, '0') + ":" + 
-                       String(now.getMinutes()).padStart(2, '0');
-            clock.innerHTML = timeStr;
-        }
-    }
-    updateClock();
-    setInterval(updateClock, 1000);
-})();
-</script>
 
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -475,6 +471,7 @@ st.markdown("""
         --btn-text: #ffffff;
     }
 
+    /* 全局去黑框 */
     * {
         text-shadow: none !important;
         -webkit-text-stroke: 0px !important;
@@ -482,6 +479,7 @@ st.markdown("""
         -webkit-font-smoothing: antialiased !important;
     }
 
+    /* 强制深色背景 */
     .stApp, [data-testid="stAppViewContainer"] {
         background-color: #09090b !important;
         background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%) !important;
@@ -495,7 +493,6 @@ st.markdown("""
         background-size: 200% 100%; animation: shimmer 8s infinite linear;
         pointer-events: none; z-index: 0;
     }
-    
     @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
     [data-testid="stHeader"] { background-color: transparent !important; }
