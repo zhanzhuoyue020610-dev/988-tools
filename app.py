@@ -255,39 +255,44 @@ def delete_user_and_recycle(username):
         return True
     except: return False
 
-# 🔥 核心修复：更健壮的去重与入库逻辑
+# 🔥 核心修复：v99.0 RLS 侦测与暴力写入
 def admin_bulk_upload_to_pool(rows_to_insert):
     if not supabase or not rows_to_insert: return 0, "No data to insert"
     
+    success_count = 0
+    
+    # 1. 提取本次所有号码
+    incoming_phones = [str(r['phone']) for r in rows_to_insert] # 强制转字符串
+    
     try:
-        # 1. 提取本次所有号码
-        incoming_phones = [r['phone'] for r in rows_to_insert]
-        
-        # 2. 查询数据库中已存在的号码 (分批查防止 URL 过长)
+        # 2. 从数据库查询已存在号码 (分批查)
         existing_phones = set()
         chunk_size = 500
         for i in range(0, len(incoming_phones), chunk_size):
             batch = incoming_phones[i:i+chunk_size]
             res = supabase.table('leads').select('phone').in_('phone', batch).execute()
             for item in res.data:
-                existing_phones.add(item['phone'])
+                existing_phones.add(str(item['phone']))
         
-        # 3. 内存去重：只保留数据库里没有的
-        final_rows = [r for r in rows_to_insert if r['phone'] not in existing_phones]
+        # 3. 内存过滤
+        final_rows = [r for r in rows_to_insert if str(r['phone']) not in existing_phones]
         
         if not final_rows:
-            return 0, f"所有 {len(rows_to_insert)} 个号码均已存在，已自动过滤。"
+            return 0, f"所有 {len(rows_to_insert)} 个号码均已存在，已过滤。"
         
-        # 4. 批量插入 (使用普通 Insert，因为已经去重了)
-        # 🔥 关键修复：如果还有问题，这里会抛出异常供前端显示
-        supabase.table('leads').insert(final_rows).execute()
+        # 4. 执行插入
+        # 🔥 关键修改：检查返回数据，探测 RLS
+        response = supabase.table('leads').insert(final_rows).execute()
         
-        return len(final_rows), f"成功入库 {len(final_rows)} 个新号码 (过滤了 {len(rows_to_insert) - len(final_rows)} 个重复)"
+        # 如果没有报错，但是返回的数据是空的，说明被 RLS 拦截了
+        if len(response.data) == 0:
+            return 0, "⚠️ 数据库权限拒绝 (RLS Policy Blocking)。请在 Supabase 后台执行 SQL: ALTER TABLE leads DISABLE ROW LEVEL SECURITY;"
+            
+        return len(response.data), "Success"
 
     except Exception as e:
-        # 5. 兜底方案：如果批量插入依然失败，尝试逐条插入
-        success_count = 0
-        fail_log = str(e)
+        # 5. 兜底逐条插入
+        err_msg = str(e)
         for row in final_rows:
             try:
                 supabase.table('leads').insert(row).execute()
@@ -296,9 +301,9 @@ def admin_bulk_upload_to_pool(rows_to_insert):
                 pass
         
         if success_count > 0:
-            return success_count, f"批量模式失败({fail_log})，已切换逐条模式成功入库 {success_count} 个"
+            return success_count, f"批量失败({err_msg[:20]}...)，逐条抢救成功 {success_count} 个"
         else:
-            return 0, f"入库彻底失败: {fail_log}"
+            return 0, f"入库失败: {err_msg}"
 
 def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
@@ -812,12 +817,8 @@ elif selected_nav == "Import":
                     for i in range(0, len(plist), 500):
                         batch = plist[i:i+500]
                         res, err = process_checknumber_task(batch, CN_KEY, CN_USER)
-                        
-                        # 如果 API 报错，显示红字
                         if err != "Success" and err != "Empty List":
                             s.write(f"验证失败 ({err})，请尝试勾选“跳过验证”重试。")
-                            # 不中断，继续跑完
-                        
                         valid.extend([p for p in batch if res.get(p)=='valid'])
                         time.sleep(1)
                 
@@ -830,7 +831,6 @@ elif selected_nav == "Import":
                     rows.append({"Shop":shp, "Link":lnk, "Phone":p, "Msg":"", "retry_count": 0, "is_frozen": False, "error_log": None})
                     if len(rows)>=100: 
                         count, msg = admin_bulk_upload_to_pool(rows)
-                        # 🔥 只有当插入数为 0 且 rows 不为空时才报警
                         if count == 0 and len(rows) > 0: s.write(f"批次警告: {msg}")
                         rows=[]
                 if rows: 
