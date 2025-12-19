@@ -213,7 +213,7 @@ def update_user_limit(username, new_limit):
     except: return False
 
 # --- 🚀 报价单生成引擎 (XlsxWriter) ---
-# 🔥 核心升级：图片自动缩放 (Fit-to-Cell)
+# 🔥 核心升级：修复 ValueError，确保传递 BytesIO 对象
 def generate_quotation_excel(items, service_fee_percent, total_domestic_freight, company_info):
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
@@ -241,7 +241,7 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     headers = [
         ("序号\nNo.", 4), 
         ("型号\nArticul", 15), 
-        ("图片\nPhoto", 15), # 这一列宽度约为 110px
+        ("图片\nPhoto", 15), 
         ("名称\nName", 15), 
         ("产品描述\nDescription", 25), 
         ("数量\nQty", 8), 
@@ -258,8 +258,6 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     total_product_value = 0
     
     # 设定目标单元格大小 (像素)
-    # Row height 80 points ≈ 106 pixels
-    # Col width 15 chars ≈ 110 pixels
     TARGET_HEIGHT = 100
     TARGET_WIDTH = 100
 
@@ -271,29 +269,39 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         line_total = final_unit_price * qty
         total_product_value += line_total
 
-        # 设置行高为 80 points
+        # 设置行高
         worksheet.set_row(current_row, 80)
         
         worksheet.write(current_row, 0, idx, fmt_cell_center)
         worksheet.write(current_row, 1, item.get('model', ''), fmt_cell_center)
         
         if item.get('image_data'):
-            img_data = io.BytesIO(item['image_data'])
-            # 打开图片获取实际尺寸
-            pil_img = Image.open(img_data)
-            img_width, img_height = pil_img.size
-            
-            # 计算缩放比例，保持长宽比
-            x_scale = TARGET_WIDTH / img_width
-            y_scale = TARGET_HEIGHT / img_height
-            scale = min(x_scale, y_scale) # 使用较小的比例确保完全放入
-            
-            worksheet.insert_image(current_row, 2, "img.png", {
-                'image_data': item['image_data'], 
-                'x_scale': scale, 
-                'y_scale': scale, 
-                'object_position': 2 # 2 = Center
-            })
+            try:
+                # 关键修复：创建全新的 BytesIO 对象
+                img_byte_stream = io.BytesIO(item['image_data'])
+                
+                # 计算缩放比例
+                pil_img = Image.open(img_byte_stream)
+                img_width, img_height = pil_img.size
+                
+                if img_width > 0 and img_height > 0:
+                    x_scale = TARGET_WIDTH / img_width
+                    y_scale = TARGET_HEIGHT / img_height
+                    scale = min(x_scale, y_scale)
+                else:
+                    scale = 0.5
+
+                # 重置指针，确保 xlsxwriter 能读取
+                img_byte_stream.seek(0)
+                
+                worksheet.insert_image(current_row, 2, "img.png", {
+                    'image_data': img_byte_stream,  # 传递 BytesIO 对象，而非 bytes
+                    'x_scale': scale, 
+                    'y_scale': scale, 
+                    'object_position': 2 
+                })
+            except Exception as e:
+                worksheet.write(current_row, 2, "Error", fmt_cell_center)
         else:
             worksheet.write(current_row, 2, "No Image", fmt_cell_center)
 
@@ -323,10 +331,7 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
 # --- 🔥 智能图片裁剪 (Exact/Strict Crop) ---
 def crop_image_exact(original_image_bytes, bbox_1000):
     """
-    精准裁剪算法：
-    1. 不再进行正方形补白。
-    2. 不再进行向外扩充。
-    3. 严格遵循 AI 给出的坐标 (长方形)。
+    精准裁剪算法
     """
     try:
         if not bbox_1000 or len(bbox_1000) != 4: return original_image_bytes
@@ -334,24 +339,19 @@ def crop_image_exact(original_image_bytes, bbox_1000):
         img = Image.open(io.BytesIO(original_image_bytes))
         width, height = img.size
         
-        # 1. 提取 AI 原始坐标
         ymin_rel, xmin_rel, ymax_rel, xmax_rel = bbox_1000
         
-        # 2. 转换为绝对坐标
         y1 = int(ymin_rel / 1000 * height)
         x1 = int(xmin_rel / 1000 * width)
         y2 = int(ymax_rel / 1000 * height)
         x2 = int(xmax_rel / 1000 * width)
         
-        # 3. 边界修正 (防止越界)
         x1 = max(0, x1); y1 = max(0, y1)
         x2 = min(width, x2); y2 = min(height, y2)
         
-        # 4. 安全检查：如果坐标无效（如 x1 > x2），返回原图
         if (x2 - x1) < 5 or (y2 - y1) < 5:
             return original_image_bytes
 
-        # 5. 直接裁剪
         cropped_img = img.crop((x1, y1, x2, y2))
         
         output = io.BytesIO()
