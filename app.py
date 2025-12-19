@@ -40,17 +40,15 @@ warnings.filterwarnings("ignore")
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 修复方案：从外部文件读取 Logo Base64，避免代码报错
-def get_company_logo_base64():
+# 🔥 修复：从外部 txt 文件读取 Base64 字符串，避免代码报错
+def load_logo_b64():
     try:
-        # 尝试读取同目录下的 logo.txt 文件
-        with open("logo.txt", "r") as f:
+        with open("logo_b64.txt", "r") as f:
             return f.read().strip()
     except FileNotFoundError:
-        # 如果找不到文件，返回空，不会报错，只是不显示 Logo
-        return ""
+        return "" # 如果文件没找到，就留空，不会报错
 
-COMPANY_LOGO_B64 = get_company_logo_base64()
+COMPANY_LOGO_B64 = load_logo_b64()
 
 CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
@@ -188,7 +186,7 @@ def update_user_profile(old_username, new_username, new_password=None, new_realn
         if new_username and new_username != old_username:
             update_data['username'] = new_username
             supabase.table('users').update(update_data).eq('username', old_username).execute()
-            supabase.table('leads').update({'assigned_to': new_username}).eq('assigned_to', old_username).execute()
+            supabase.table('leads').update({'assigned_to': new_username}).eq('assigned_to', new_username).execute()
             supabase.table('wechat_customers').update({'assigned_to': new_username}).eq('assigned_to', old_username).execute()
         else:
             supabase.table('users').update(update_data).eq('username', old_username).execute()
@@ -929,4 +927,479 @@ if selected_nav == "Quotation":
             
             c_text_ai, c_img_ai = st.columns([2, 1])
             with c_text_ai:
-                ai_input_text = st.text_area("📄 方式一：粘贴文字/链接", height=120, placeholder="例如
+                ai_input_text = st.text_area("📄 方式一：粘贴文字/链接", height=120, placeholder="例如：这款黑色的包，价格25元，我要100个")
+            with c_img_ai:
+                ai_input_image = st.file_uploader("🖼️ 方式二：上传产品图", type=['jpg', 'png', 'jpeg'])
+            
+            # AI 处理逻辑
+            if st.button("✨ 开始 AI 识别"):
+                with st.status("正在唤醒 AI 引擎...", expanded=True) as status:
+                    new_items = []
+                    
+                    # 优先处理图片
+                    if ai_input_image:
+                        status.write("👁️ 正在进行多目标视觉分析 & 智能裁剪 (Fit-to-Cell)...")
+                        
+                        original_bytes = ai_input_image.getvalue()
+                        ai_res = parse_image_with_ai(ai_input_image, client)
+                        
+                        # 处理返回的列表 (支持多商品)
+                        if ai_res and "items" in ai_res:
+                            for raw_item in ai_res["items"]:
+                                
+                                # 核心：智能裁剪 (Exact/Strict Crop)
+                                cropped_bytes = original_bytes
+                                if "bbox_1000" in raw_item:
+                                    cropped_bytes = crop_image_exact(original_bytes, raw_item["bbox_1000"])
+                                
+                                new_items.append({
+                                    "model": raw_item.get('model', ''), 
+                                    "name": raw_item.get('name_ru', 'Товар'), 
+                                    "desc": raw_item.get('desc_ru', ''), 
+                                    "price_exw": float(raw_item.get('price_cny', 0)), 
+                                    "qty": int(raw_item.get('qty', 1)), 
+                                    "image_data": cropped_bytes 
+                                })
+                        
+                    # 其次处理文字
+                    elif ai_input_text:
+                        status.write("🧠 正在理解语义...")
+                        ai_res = parse_product_info_with_ai(ai_input_text, client)
+                        if ai_res:
+                             new_items.append({
+                                "model": ai_res.get('model', ''), 
+                                "name": ai_res.get('name_ru', 'Товар'), 
+                                "desc": ai_res.get('desc_ru', ''), 
+                                "price_exw": float(ai_res.get('price_cny', 0)), 
+                                "qty": int(ai_res.get('qty', 1)), 
+                                "image_data": None
+                            })
+                    
+                    if new_items:
+                        st.session_state["quote_items"].extend(new_items)
+                        status.update(label=f"成功识别 {len(new_items)} 个商品", state="complete")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        status.update(label="识别失败", state="error")
+                        st.error("无法提取有效信息，请确保图片清晰")
+
+        st.divider()
+
+        # --- 下方：全局设置 & 预览 ---
+        col_list, col_setting = st.columns([2.5, 1.5])
+
+        with col_list:
+            st.markdown("#### 📋 待报价商品清单")
+            items = st.session_state["quote_items"]
+            if items:
+                df_show = pd.DataFrame(items)
+                if not df_show.empty:
+                    st.dataframe(df_show[['model', 'name', 'desc', 'price_exw', 'qty']], use_container_width=True, 
+                                 column_config={"model":"型号", "name":"俄语品名", "desc":"简述", "price_exw":"工厂价", "qty":"数量"})
+                
+                if st.button("🗑️ 清空所有商品"):
+                    st.session_state["quote_items"] = []
+                    st.rerun()
+            else:
+                st.caption("暂无商品，请在上方添加")
+
+        with col_setting:
+            st.markdown("#### ⚙️ 报价单全局设置")
+            
+            # 运费逻辑变更：独立行
+            total_freight = st.number_input("🚛 国内总运费 (Total Freight ¥)", min_value=0.0, step=10.0, help="这笔费用将单独列示在报价单底部，不会分摊到单价中")
+            service_fee = st.slider("💰 服务费率 (Profit %)", 0, 50, 5)
+            
+            with st.expander("🏢 公司表头信息 (含 Logo & WeChat)", expanded=True):
+                co_name = st.text_input("公司名称", value="义乌市万昶进出口有限公司")
+                # co_logo = st.file_uploader("公司 Logo (可选)", type=['png', 'jpg', 'jpeg'], key="co_logo")
+                co_tel = st.text_input("电话", value="+86-15157938188")
+                co_wechat = st.text_input("WeChat ID", value="15157938188") # 新增 WeChat
+                co_email = st.text_input("邮箱", value="CTF1111@163.com")
+                co_addr = st.text_input("地址", value="义乌市工人北路1121号5楼")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            if items:
+                # 预览最终价格
+                product_total_exw = sum(i['price_exw'] * i['qty'] for i in items)
+                service_fee_val = product_total_exw * (service_fee/100)
+                final_val = product_total_exw + total_freight + service_fee_val
+                
+                st.markdown(f"""
+                <div style="padding:15px; border:1px solid #444; border-radius:10px; background:rgba(255,255,255,0.05)">
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e">
+                        <span>工厂货值 (EXW Total):</span> <span>¥ {product_total_exw:,.2f}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e; margin-top:5px;">
+                        <span>+ 国内运费:</span> <span>¥ {total_freight:,.2f}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e; margin-top:5px;">
+                        <span>+ 服务费 ({service_fee}%):</span> <span>¥ {service_fee_val:,.2f}</span>
+                    </div>
+                    <div style="height:1px; background:#555; margin:10px 0;"></div>
+                    <div style="display:flex; justify-content:space-between; font-size:18px; font-weight:600; color:#fff">
+                        <span>总计 (Grand Total):</span> <span>¥ {final_val:,.2f}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # logo_bytes = co_logo.getvalue() if co_logo else None
+                
+                excel_data = generate_quotation_excel(
+                    items, service_fee, total_freight, 
+                    {
+                        "name":co_name, "tel":co_tel, "wechat":co_wechat, 
+                        "email":co_email, "addr":co_addr, "logo_b64": COMPANY_LOGO_B64
+                    }
+                )
+                
+                st.download_button(
+                    label="📥 导出 Excel 报价单",
+                    data=excel_data,
+                    file_name=f"Quotation_{date.today().isoformat()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary"
+                )
+
+# ------------------------------------------
+# (其他模块保持不变)
+# ------------------------------------------
+elif selected_nav == "System" and st.session_state['role'] == 'admin':
+    
+    with st.expander("API Key 调试器", expanded=False):
+        st.write("如报错请在 Secrets 更新 Key 并重启")
+        st.code(f"Model: {CONFIG['AI_MODEL']}", language="text")
+        st.code(f"Key (Last 5): {OPENAI_KEY[-5:] if OPENAI_KEY else 'N/A'}", language="text")
+        
+    frozen_count, frozen_leads = get_frozen_leads_count()
+    if frozen_count > 0:
+        st.markdown(f"""<div class="custom-alert alert-error">警告：有 {frozen_count} 个任务被冻结</div>""", unsafe_allow_html=True)
+        with st.expander(f"查看冻结详情", expanded=True):
+            st.dataframe(pd.DataFrame(frozen_leads))
+            if st.button("清除所有冻结"):
+                supabase.table('leads').delete().eq('is_frozen', True).execute()
+                st.success("已清除"); time.sleep(1); st.rerun()
+
+    st.markdown("#### 系统健康状态")
+    health = check_api_health(CN_USER, CN_KEY, OPENAI_KEY)
+    
+    k1, k2, k3 = st.columns(3)
+    def status_pill(title, is_active, detail):
+        dot = "dot-green" if is_active else "dot-red"
+        text = "运行正常" if is_active else "连接异常"
+        st.markdown(f"""<div style="background-color:rgba(30, 31, 32, 0.6); backdrop-filter:blur(10px); padding:20px; border-radius:16px;"><div style="font-size:14px; color:#c4c7c5;">{title}</div><div style="margin-top:10px; font-size:16px; color:white; font-weight:500;"><span class="status-dot {dot}"></span>{text}</div><div style="font-size:12px; color:#8e8e8e; margin-top:5px;">{detail}</div></div>""", unsafe_allow_html=True)
+
+    with k1: status_pill("云数据库", health['supabase'], "Supabase")
+    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber")
+    with k3: status_pill("AI 引擎", health['openai'], f"OpenAI ({CONFIG['AI_MODEL']})")
+    
+    if health['msg']:
+        st.markdown(f"""<div class="custom-alert alert-error">诊断报告: {'; '.join(health['msg'])}</div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("#### 沙盒模拟")
+    sb_file = st.file_uploader("上传测试文件", type=['csv', 'xlsx'])
+    if sb_file and st.button("开始模拟"):
+        try:
+            if sb_file.name.endswith('.csv'): df = pd.read_csv(sb_file)
+            else: df = pd.read_excel(sb_file)
+            st.info(f"读取到 {len(df)} 行，正在处理...")
+            with st.status("正在运行流水线...", expanded=True) as s:
+                s.write("正在提取号码..."); nums = []
+                for _, r in df.head(5).iterrows(): nums.extend(extract_all_numbers(r))
+                s.write(f"提取结果: {nums}"); res = process_checknumber_task(nums, CN_KEY, CN_USER)
+                valid = [p for p in nums if res.get(p)=='valid']; s.write(f"有效号码: {valid}")
+                if valid:
+                    s.write("正在生成 AI 话术..."); msg = get_ai_message_sniper(client, "测试", "http://test.com", "管理员")
+                    s.write(f"生成结果: {msg}")
+                s.update(label="模拟完成", state="complete")
+        except Exception as e: st.error(str(e))
+
+# --- 📱 WECHAT SCRM ---
+elif selected_nav == "WeChat":
+    if st.session_state['role'] == 'admin':
+        st.markdown("#### 微信客户管理")
+        with st.expander("导入微信客户", expanded=True):
+            st.caption("格式：客户编号 | 业务员 | 周期")
+            wc_file = st.file_uploader("上传 Excel", type=['xlsx', 'csv'], key="wc_up")
+            if wc_file and st.button("开始导入"):
+                try:
+                    df = pd.read_csv(wc_file) if wc_file.name.endswith('.csv') else pd.read_excel(wc_file)
+                    if admin_import_wechat_customers(df):
+                        st.markdown(f"""<div class="custom-alert alert-success">成功导入 {len(df)} 个客户</div>""", unsafe_allow_html=True)
+                    else: st.markdown("""<div class="custom-alert alert-error">导入失败</div>""", unsafe_allow_html=True)
+                except Exception as e: st.error(str(e))
+    else:
+        st.markdown("#### 微信维护助手")
+        try:
+            wc_tasks = get_wechat_tasks(st.session_state['username'])
+            if not wc_tasks:
+                st.markdown("""<div class="custom-alert alert-info">今日无维护任务</div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"**今日需维护：{len(wc_tasks)} 人**")
+                for task in wc_tasks:
+                    with st.expander(f"客户编号：{task['customer_code']}", expanded=True):
+                        script = get_wechat_maintenance_script(client, task['customer_code'], st.session_state['username'])
+                        st.code(script, language="text")
+                        c1, c2 = st.columns([3, 1])
+                        with c1: st.caption(f"上次联系：{task['last_contact_date']}")
+                        with c2:
+                            if st.button("完成打卡", key=f"wc_done_{task['id']}"):
+                                complete_wechat_task(task['id'], task['cycle_days'], st.session_state['username'])
+                                st.toast(f"积分 +{CONFIG['POINTS_WECHAT_TASK']}")
+                                time.sleep(1); st.rerun()
+        except Exception as e:
+            st.markdown(f"""<div class="custom-alert alert-error">数据加载失败: {str(e)} (请检查 RLS)</div>""", unsafe_allow_html=True)
+
+# --- 🎙️ TOOLS (Voice Translator) ---
+elif selected_nav == "Tools":
+    st.markdown("#### 🎙️ 俄语语音翻译器 (Whisper)")
+    
+    with st.expander("📝 使用说明 (必读)", expanded=True):
+        st.markdown("""
+        1. **获取语音：** 从微信/WhatsApp 长按语音消息 -> 保存为文件（支持 mp3, wav, m4a）。
+        2. **上传：** 点击下方按钮上传。
+        3. **查看：** AI 会自动识别俄语内容，并翻译成中文。
+        """)
+        
+    uploaded_audio = st.file_uploader("上传语音文件", type=['mp3', 'wav', 'm4a', 'ogg', 'webm'])
+    
+    if uploaded_audio:
+        if st.button("开始识别与翻译"):
+            with st.status("正在呼叫 AI 大脑...", expanded=True) as status:
+                status.write("👂 正在听写俄语...")
+                ru_text, cn_text = transcribe_audio(client, uploaded_audio)
+                
+                status.write("🧠 正在翻译成中文...")
+                time.sleep(1)
+                status.update(label="处理完成", state="complete")
+                
+                st.markdown("---")
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**🇷🇺 俄语原文**")
+                    st.info(ru_text)
+                with c2:
+                    st.markdown("**🇨🇳 中文翻译**")
+                    st.success(cn_text)
+
+# --- 💼 WORKBENCH (Sales) ---
+elif selected_nav == "Workbench":
+    my_leads = get_todays_leads(st.session_state['username'], client)
+    
+    user_limit = get_user_limit(st.session_state['username'])
+    total, curr = user_limit, len(my_leads)
+    
+    c_stat, c_action = st.columns([2, 1])
+    with c_stat:
+        done = sum(1 for x in my_leads if x.get('is_contacted'))
+        st.metric("今日进度", f"{done} / {total}")
+        if total > 0: st.progress(min(done/total, 1.0))
+        else: st.progress(0)
+        
+    with c_action:
+        st.markdown("<br>", unsafe_allow_html=True)
+        force_import = st.checkbox("跳过验证（强行入库）", help="如 API 故障，请勾选此项强制导入", key="force_import")
+        
+        if curr < total:
+            if st.button(f"领取任务 (余 {total-curr} 个)"):
+                _, status = claim_daily_tasks(st.session_state['username'], client)
+                if status=="empty": st.markdown("""<div class="custom-alert alert-error">公池已空</div>""", unsafe_allow_html=True)
+                else: st.rerun()
+        else: st.markdown("""<div class="custom-alert alert-success">今日已领满</div>""", unsafe_allow_html=True)
+
+    st.markdown("#### 任务列表")
+    tabs = st.tabs(["待跟进", "已完成"])
+    with tabs[0]:
+        todos = [x for x in my_leads if not x.get('is_contacted')]
+        if not todos: st.caption("没有待办任务")
+        for item in todos:
+            with st.expander(f"{item['shop_name']}", expanded=True):
+                if not item['ai_message']:
+                    st.markdown("""<div class="custom-alert alert-info">文案生成中...</div>""", unsafe_allow_html=True)
+                else:
+                    st.write(item['ai_message'])
+                    c1, c2 = st.columns(2)
+                    key = f"clk_{item['id']}"
+                    if key not in st.session_state: st.session_state[key] = False
+                    if not st.session_state[key]:
+                        if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
+                        c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
+                    else:
+                        url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
+                        c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
+                        if c2.button("确认完成", key=f"fin_{item['id']}"):
+                            mark_lead_complete_secure(item['id'], st.session_state['username'])
+                            st.toast(f"积分 +{CONFIG['POINTS_PER_TASK']}")
+                            del st.session_state[key]; time.sleep(1); st.rerun()
+    with tabs[1]:
+        dones = [x for x in my_leads if x.get('is_contacted')]
+        if dones:
+            df = pd.DataFrame(dones)
+            df['time'] = pd.to_datetime(df['completed_at']).dt.strftime('%H:%M')
+            df_display = df[['shop_name', 'phone', 'time']].rename(columns={'shop_name':'店铺名', 'phone':'电话', 'time':'时间'})
+            st.dataframe(df_display, use_container_width=True)
+        else: st.caption("暂无完成记录")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("#### 全量历史记录")
+    _, _, df_history = get_user_historical_data(st.session_state['username'])
+    if not df_history.empty:
+        st.dataframe(df_history, column_config={"shop_name": "客户店铺", "phone": "联系电话", "shop_link": st.column_config.LinkColumn("店铺链接"), "completed_at": st.column_config.DatetimeColumn("处理时间", format="YYYY-MM-DD HH:mm")}, use_container_width=True)
+    else: st.caption("暂无历史记录")
+
+# --- 📅 LOGS (Admin) ---
+elif selected_nav == "Logs":
+    st.markdown("#### 活动日志监控")
+    d = st.date_input("选择日期", date.today())
+    
+    try:
+        if d:
+            c, f = get_daily_logs(d.isoformat())
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("领取记录")
+                if not c.empty: st.dataframe(c, use_container_width=True)
+                else: st.markdown("""<div class="custom-alert alert-info">无数据</div>""", unsafe_allow_html=True)
+            with col2:
+                st.markdown("完成记录")
+                if not f.empty: st.dataframe(f, use_container_width=True)
+                else: st.markdown("""<div class="custom-alert alert-info">无数据</div>""", unsafe_allow_html=True)
+    except Exception as e:
+        st.markdown(f"""<div class="custom-alert alert-error">日志加载失败: {str(e)}</div>""", unsafe_allow_html=True)
+
+# --- 👥 TEAM (Admin) ---
+elif selected_nav == "Team":
+    try:
+        users = pd.DataFrame(supabase.table('users').select("*").neq('role', 'admin').execute().data)
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            if not users.empty: u = st.radio("员工列表", users['username'].tolist(), label_visibility="collapsed")
+            else: u = None; st.markdown("""<div class="custom-alert alert-info">暂无员工</div>""", unsafe_allow_html=True)
+            st.markdown("---")
+            with st.expander("新增员工"):
+                with st.form("new"):
+                    nu = st.text_input("用户名"); np = st.text_input("密码", type="password"); nn = st.text_input("真实姓名")
+                    if st.form_submit_button("创建账号"): create_user(nu, np, nn); st.rerun()
+        with c2:
+            if u:
+                info = users[users['username']==u].iloc[0]
+                tc, td, hist = get_user_historical_data(u)
+                perf = get_user_daily_performance(u)
+                
+                # 获取当前限额
+                current_limit = info.get('daily_limit') or CONFIG["DAILY_QUOTA"]
+
+                st.markdown(f"### {info['real_name']}")
+                st.caption(f"账号: {info['username']} | 积分: {info.get('points', 0)} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
+                
+                # 🔥 动态调整上限功能
+                with st.container():
+                    st.markdown("#### ⚙️ 账号风控设置")
+                    col_lim, col_btn = st.columns([3, 1])
+                    with col_lim:
+                        new_daily_limit = st.slider(
+                            "每日最大任务分配上限", 
+                            min_value=0, max_value=100, 
+                            value=int(current_limit),
+                            help="调整此数值可控制该员工每天能领取的最大任务数，用于防止封号。"
+                        )
+                    with col_btn:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if st.button("保存设置"):
+                            if update_user_limit(u, new_daily_limit):
+                                st.toast(f"已更新 {info['real_name']} 的每日上限为 {new_daily_limit}")
+                                time.sleep(1); st.rerun()
+                            else: st.error("更新失败")
+                
+                st.divider()
+
+                k1, k2 = st.columns(2)
+                k1.metric("历史总领取", tc); k2.metric("历史总完成", td)
+                
+                t1, t2, t3 = st.tabs(["📊 每日绩效", "📋 详细清单", "🛡️ 账号管理"])
+                with t1:
+                    if not perf.empty: 
+                        st.markdown("#### 近 14 天绩效趋势")
+                        chart_data = perf.head(14)
+                        st.bar_chart(chart_data, color=["#4b90ff", "#ff5546"]) 
+                        with st.expander("查看详细数据表"):
+                            st.dataframe(perf, use_container_width=True)
+                    else: st.caption("暂无绩效数据")
+                with t2:
+                    if not hist.empty: st.dataframe(hist, use_container_width=True)
+                    else: st.caption("暂无数据")
+                with t3:
+                    st.markdown("**修改资料**")
+                    with st.form("edit_user"):
+                        new_u = st.text_input("新用户名 (留空则不改)", value=u)
+                        new_n = st.text_input("新真实姓名 (留空则不改)", value=info['real_name'])
+                        new_p = st.text_input("新密码 (留空则不改)", type="password")
+                        if st.form_submit_button("保存修改"):
+                            if update_user_profile(u, new_u, new_p if new_p else None, new_n): st.success("资料已更新"); time.sleep(1); st.rerun()
+                            else: st.error("更新失败")
+                    st.markdown("---")
+                    st.markdown("**危险操作**")
+                    if st.button("删除账号并回收任务"): delete_user_and_recycle(u); st.rerun()
+    except Exception as e:
+        st.markdown(f"""<div class="custom-alert alert-error">无法读取团队数据: {str(e)} <br>请确认已执行 SQL: ALTER TABLE users ADD COLUMN daily_limit INTEGER DEFAULT 25;</div>""", unsafe_allow_html=True)
+
+# --- 📥 IMPORT (Admin) ---
+elif selected_nav == "Import":
+    pool = get_public_pool_count()
+    if pool < CONFIG["LOW_STOCK_THRESHOLD"]: st.markdown(f"""<div class="custom-alert alert-error">库存告急：仅剩 {pool} 个</div>""", unsafe_allow_html=True)
+    else: st.metric("公共池库存", pool)
+    
+    with st.expander("每日归仓工具"):
+        if st.button("一键回收过期任务"): n = recycle_expired_tasks(); st.success(f"已回收 {n} 个任务")
+            
+    st.markdown("---")
+    st.markdown("#### 批量进货")
+    
+    force_import = st.checkbox("跳过 WhatsApp 验证 (强行入库)", help="如 API 故障，请勾选此项强制导入", key="force_import_admin")
+
+    f = st.file_uploader("上传文件 (CSV/Excel)", type=['csv', 'xlsx'])
+    if f:
+        df = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
+        st.caption(f"解析到 {len(df)} 行数据")
+        if st.button("开始清洗入库"):
+            with st.status("正在处理...", expanded=True) as s:
+                df=df.astype(str); phones = set(); rmap = {}
+                for i, r in df.iterrows():
+                    for p in extract_all_numbers(r): phones.add(p); rmap.setdefault(p, []).append(i)
+                s.write(f"提取到 {len(phones)} 个独立号码")
+                plist = list(phones); valid = []
+                
+                if force_import:
+                    s.write("已跳过验证，所有号码视为有效...")
+                    valid = plist
+                else:
+                    for i in range(0, len(plist), 500):
+                        batch = plist[i:i+500]
+                        res, err, df_debug = process_checknumber_task(batch, CN_KEY, CN_USER)
+                        if err != "Success" and err != "Empty List":
+                            s.write(f"❌ 验证失败 ({err})")
+                            if df_debug is not None:
+                                s.write("API 返回数据预览：")
+                                st.dataframe(df_debug.head())
+                        valid.extend([p for p in batch if res.get(p)=='valid'])
+                        time.sleep(1)
+                
+                s.write(f"最终有效入库: {len(valid)} 个")
+                
+                rows = []
+                for idx, p in enumerate(valid):
+                    r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
+                    rows.append({"shop_name":shp, "shop_link":lnk, "phone":p, "ai_message":"", "retry_count": 0, "is_frozen": False, "error_log": None})
+                    if len(rows)>=100: 
+                        count, msg = admin_bulk_upload_to_pool(rows)
+                        if count == 0 and len(rows) > 0: s.write(f"⚠️ 批次警告: {msg}")
+                        rows=[]
+                if rows: 
+                    count, msg = admin_bulk_upload_to_pool(rows)
+                    if count == 0 and len(rows) > 0: s.write(f"⚠️ 批次警告: {msg}")
+                    
+                s.update(label="操作完成", state="complete")
+            time.sleep(1); st.rerun()
