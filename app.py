@@ -23,13 +23,13 @@ except ImportError:
 warnings.filterwarnings("ignore")
 
 # ==========================================
-# 🎨 UI 主题 & 核心配置 (置顶)
+# 🎨 UI 主题 & 核心配置
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
 CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
-    "DAILY_QUOTA": 25,
+    "DAILY_QUOTA": 25, # 这是默认值，如果个人设置没生效，会用这个
     "LOW_STOCK_THRESHOLD": 300,
     "POINTS_PER_TASK": 10,
     "POINTS_WECHAT_TASK": 5,
@@ -37,7 +37,7 @@ CONFIG = {
     "AI_MODEL": "gpt-4o-mini"
 }
 
-# 1. 注入时钟 HTML 占位符
+# 注入时钟 HTML
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -49,7 +49,7 @@ st.markdown("""
 ">Initialize...</div>
 """, unsafe_allow_html=True)
 
-# 2. 注入 JS (强力轮询 + Iframe 穿透)
+# 注入 JS
 components.html("""
     <script>
         function updateClock() {
@@ -59,8 +59,6 @@ components.html("""
                        String(now.getDate()).padStart(2, '0') + " " + 
                        String(now.getHours()).padStart(2, '0') + ":" + 
                        String(now.getMinutes()).padStart(2, '0');
-            
-            // 穿透寻找父页面的元素
             var clock = window.parent.document.getElementById('clock-container');
             if (clock) { clock.innerHTML = timeStr; }
         }
@@ -68,7 +66,7 @@ components.html("""
     </script>
 """, height=0)
 
-# 3. 注入 CSS (暗黑流光 + 防白屏层级修正)
+# 注入 CSS
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -83,75 +81,38 @@ st.markdown("""
         --btn-text: #ffffff;
     }
 
-    /* 全局重置 */
-    * {
-        text-shadow: none !important;
-        -webkit-text-stroke: 0px !important;
-        box-shadow: none !important;
-        -webkit-font-smoothing: antialiased !important;
-    }
-
-    /* 强制深色背景 + 流光 */
-    .stApp, [data-testid="stAppViewContainer"] {
-        background-color: #09090b !important;
-        background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%) !important;
-        color: var(--text-primary) !important;
-        font-family: 'Inter', 'Noto Sans SC', sans-serif !important;
-    }
-    
-    /* 流光动画层 (z-index: 0) */
-    [data-testid="stAppViewContainer"]::after {
-        content: ""; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.03) 50%, transparent 60%);
-        background-size: 200% 100%; animation: shimmer 8s infinite linear;
-        pointer-events: none; z-index: 0;
-    }
+    * { text-shadow: none !important; -webkit-text-stroke: 0px !important; box-shadow: none !important; -webkit-font-smoothing: antialiased !important; }
+    .stApp, [data-testid="stAppViewContainer"] { background-color: #09090b !important; background-image: linear-gradient(135deg, #0f172a 0%, #09090b 100%) !important; color: var(--text-primary) !important; font-family: 'Inter', 'Noto Sans SC', sans-serif !important; }
+    [data-testid="stAppViewContainer"]::after { content: ""; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.03) 50%, transparent 60%); background-size: 200% 100%; animation: shimmer 8s infinite linear; pointer-events: none; z-index: 0; }
     @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-
-    /* 🔥 关键修复：提升内容层级，防止被背景遮挡导致不可点击或白屏 */
-    .block-container {
-        position: relative;
-        z-index: 10 !important;
-    }
-
-    /* 强制头部透明 */
+    .block-container { position: relative; z-index: 10 !important; }
     [data-testid="stHeader"] { background-color: transparent !important; }
     p, h1, h2, h3, h4, h5, h6, span, label, div[data-testid="stMarkdownContainer"] { background-color: transparent !important; }
-
-    /* UI 组件样式 */
     .gemini-header { font-weight: 600; font-size: 28px; background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 1px; margin-bottom: 5px; }
     .warm-quote { font-size: 13px; color: #8e8e8e; letter-spacing: 0.5px; margin-bottom: 25px; font-style: normal; }
     .points-pill { background-color: rgba(255, 255, 255, 0.05) !important; color: #e3e3e3; border: 1px solid rgba(255, 255, 255, 0.1); padding: 6px 16px; border-radius: 20px; font-size: 13px; font-family: 'Inter', monospace; }
-
     div[data-testid="stRadio"] > div { background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); padding: 6px; border-radius: 50px; gap: 0px; display: inline-flex; }
     div[data-testid="stRadio"] label { background-color: transparent !important; color: var(--text-secondary) !important; padding: 8px 24px; border-radius: 40px; font-size: 15px; transition: all 0.3s ease; border: none; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #3c4043 !important; color: #ffffff !important; font-weight: 500; }
-
     div[data-testid="stExpander"], div[data-testid="stForm"], div.stDataFrame { background-color: rgba(30, 31, 32, 0.6) !important; backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08) !important; border-radius: 12px; padding: 15px; }
     div[data-testid="stExpander"] details { border: none !important; }
     div[data-testid="stExpander"] summary { color: white !important; background-color: transparent !important; }
     div[data-testid="stExpander"] summary:hover { color: #6366f1 !important; }
-    
     button { color: var(--btn-text) !important; }
     div.stButton > button, div.stFormSubmitButton > button { background: var(--btn-primary) !important; color: var(--btn-text) !important; border: none !important; border-radius: 50px !important; padding: 10px 24px !important; font-weight: 600; letter-spacing: 1px; transition: all 0.2s ease; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2) !important; }
     div.stButton > button:hover, div.stFormSubmitButton > button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4) !important; }
-
     div[data-baseweb="input"], div[data-baseweb="select"] { background-color: rgba(45, 46, 51, 0.8) !important; border: 1px solid #444 !important; border-radius: 8px !important; color: white !important; }
     input { color: white !important; caret-color: #6366f1; background-color: transparent !important; }
     ::placeholder { color: #5f6368 !important; }
-    
     [data-testid="stFileUploader"] { background-color: transparent !important; }
     [data-testid="stFileUploader"] section { background-color: rgba(45, 46, 51, 0.5) !important; border: 1px dashed #555 !important; }
     [data-testid="stFileUploader"] button { background-color: #303134 !important; color: #e3e3e3 !important; border: 1px solid #444 !important; }
-    
     .custom-alert { padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; color: #e3e3e3; display: flex; align-items: center; background-color: rgba(255, 255, 255, 0.05); border: 1px solid #444; }
     .alert-error { background-color: rgba(255, 85, 70, 0.15) !important; border-color: #ff5f56 !important; color: #ff5f56 !important; }
     .alert-success { background-color: rgba(63, 185, 80, 0.15) !important; border-color: #3fb950 !important; color: #3fb950 !important; }
     .alert-info { background-color: rgba(56, 139, 253, 0.15) !important; border-color: #58a6ff !important; color: #58a6ff !important; }
-
     div[data-testid="stDataFrame"] div[role="grid"] { background-color: rgba(30, 31, 32, 0.6) !important; color: var(--text-secondary); }
     .stProgress > div > div > div > div { background: var(--accent-gradient) !important; height: 4px !important; border-radius: 10px; }
-    
     h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
     .stCaption { color: #8e8e8e !important; }
 </style>
@@ -190,7 +151,8 @@ def create_user(u, p, n, role="sales"):
     if not supabase: return False
     try:
         pwd = hash_password(p)
-        supabase.table('users').insert({"username": u, "password": pwd, "role": role, "real_name": n, "points": 0}).execute()
+        # 默认 daily_limit 设置为 CONFIG 默认值
+        supabase.table('users').insert({"username": u, "password": pwd, "role": role, "real_name": n, "points": 0, "daily_limit": CONFIG["DAILY_QUOTA"]}).execute()
         return True
     except: return False
 
@@ -224,6 +186,23 @@ def get_user_points(username):
         res = supabase.table('users').select('points').eq('username', username).single().execute()
         return res.data.get('points', 0) or 0
     except: return 0
+
+# --- 🔥 新增：每日限额管理函数 ---
+def get_user_limit(username):
+    if not supabase: return CONFIG["DAILY_QUOTA"]
+    try:
+        res = supabase.table('users').select('daily_limit').eq('username', username).single().execute()
+        # 如果数据库还没设置，回退到全局默认值
+        return res.data.get('daily_limit') or CONFIG["DAILY_QUOTA"]
+    except: return CONFIG["DAILY_QUOTA"]
+
+def update_user_limit(username, new_limit):
+    if not supabase: return False
+    try:
+        supabase.table('users').update({'daily_limit': new_limit}).eq('username', username).execute()
+        return True
+    except: return False
+# ----------------------------------
 
 # --- AI Logic ---
 def get_daily_motivation(client):
@@ -284,6 +263,27 @@ def generate_and_update_task(lead, client, rep_name):
         supabase.table('leads').update({'ai_message': msg}).eq('id', lead['id']).execute()
         return True
     except: return False
+
+def transcribe_audio(client, audio_file):
+    try:
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1", 
+            file=audio_file,
+            language="ru"
+        )
+        ru_text = transcript.text
+        
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a professional translator. Translate the following Russian business inquiry into clear, professional Chinese."},
+                {"role": "user", "content": ru_text}
+            ]
+        )
+        cn_text = completion.choices[0].message.content
+        return ru_text, cn_text
+    except Exception as e:
+        return f"Error: {str(e)}", "Translation Failed"
 
 # --- WeChat Logic ---
 def get_wechat_tasks(username):
@@ -392,11 +392,10 @@ def admin_bulk_upload_to_pool(rows_to_insert):
         final_rows = [r for r in rows_to_insert if str(r['phone']) not in existing_phones]
         if not final_rows: return 0, f"所有 {len(rows_to_insert)} 个号码均已存在。"
         
-        # 🔥 强制填入 username 防止报错 (admin)
         for row in final_rows: row['username'] = st.session_state.get('username', 'admin')
 
         response = supabase.table('leads').insert(final_rows).execute()
-        if len(response.data) == 0: return 0, "⚠️ 数据库权限拒绝 (RLS Policy Blocking)。"
+        if len(response.data) == 0: return 0, "⚠️ RLS 权限拒绝，请检查 Supabase 策略。"
         return len(response.data), "Success"
 
     except Exception as e:
@@ -410,13 +409,21 @@ def admin_bulk_upload_to_pool(rows_to_insert):
         if success_count > 0: return success_count, f"批量失败，逐条成功 {success_count} 个"
         else: return 0, f"入库失败: {err_msg}"
 
+# 🔥 修改：领取任务时使用动态限额
 def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
+    # 1. 获取该用户今日已领取的数量
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
     
-    if current_count >= CONFIG["DAILY_QUOTA"]: return existing, "full"
-    needed = CONFIG["DAILY_QUOTA"] - current_count
+    # 2. 获取该用户的动态上限 (如果未设置则用默认 25)
+    user_max_limit = get_user_limit(username)
+    
+    if current_count >= user_max_limit: 
+        return existing, "full"
+    
+    # 3. 计算还需要多少
+    needed = user_max_limit - current_count
     pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').eq('is_frozen', False).limit(needed).execute().data
     
     if pool_leads:
@@ -601,11 +608,11 @@ st.divider()
 
 # 导航
 if st.session_state['role'] == 'admin':
-    menu_map = {"System": "系统监控", "Logs": "活动日志", "Team": "团队管理", "Import": "批量进货", "WeChat": "微信管理"}
-    menu_options = ["System", "Logs", "Team", "Import", "WeChat"]
+    menu_map = {"System": "系统监控", "Logs": "活动日志", "Team": "团队管理", "Import": "批量进货", "WeChat": "微信管理", "Tools": "实用工具"}
+    menu_options = ["System", "Logs", "Team", "Import", "WeChat", "Tools"]
 else:
-    menu_map = {"Workbench": "销售工作台", "WeChat": "微信维护"}
-    menu_options = ["Workbench", "WeChat"]
+    menu_map = {"Workbench": "销售工作台", "WeChat": "微信维护", "Tools": "实用工具"}
+    menu_options = ["Workbench", "WeChat", "Tools"]
 
 selected_nav = st.radio("导航菜单", menu_options, format_func=lambda x: menu_map.get(x, x), horizontal=True, label_visibility="collapsed")
 st.markdown("<br>", unsafe_allow_html=True)
@@ -678,7 +685,6 @@ elif selected_nav == "WeChat":
                 except Exception as e: st.error(str(e))
     else:
         st.markdown("#### 微信维护助手")
-        # 🔥 FIX: 修复 Logs/Team 页面的空白问题，包裹在 try/except 中
         try:
             wc_tasks = get_wechat_tasks(st.session_state['username'])
             if not wc_tasks:
@@ -699,18 +705,55 @@ elif selected_nav == "WeChat":
         except Exception as e:
             st.markdown(f"""<div class="custom-alert alert-error">数据加载失败: {str(e)} (请检查 RLS)</div>""", unsafe_allow_html=True)
 
+# --- 🎙️ TOOLS (Voice Translator) ---
+elif selected_nav == "Tools":
+    st.markdown("#### 🎙️ 俄语语音翻译器 (Whisper)")
+    
+    with st.expander("📝 使用说明 (必读)", expanded=True):
+        st.markdown("""
+        1. **获取语音：** 从微信/WhatsApp 长按语音消息 -> 保存为文件（支持 mp3, wav, m4a）。
+        2. **上传：** 点击下方按钮上传。
+        3. **查看：** AI 会自动识别俄语内容，并翻译成中文。
+        """)
+        
+    uploaded_audio = st.file_uploader("上传语音文件", type=['mp3', 'wav', 'm4a', 'ogg', 'webm'])
+    
+    if uploaded_audio:
+        if st.button("开始识别与翻译"):
+            with st.status("正在呼叫 AI 大脑...", expanded=True) as status:
+                status.write("👂 正在听写俄语...")
+                ru_text, cn_text = transcribe_audio(client, uploaded_audio)
+                
+                status.write("🧠 正在翻译成中文...")
+                time.sleep(1)
+                status.update(label="处理完成", state="complete")
+                
+                st.markdown("---")
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**🇷🇺 俄语原文**")
+                    st.info(ru_text)
+                with c2:
+                    st.markdown("**🇨🇳 中文翻译**")
+                    st.success(cn_text)
+
 # --- 💼 WORKBENCH (Sales) ---
 elif selected_nav == "Workbench":
     my_leads = get_todays_leads(st.session_state['username'], client)
-    total, curr = CONFIG["DAILY_QUOTA"], len(my_leads)
+    
+    # 🔥 修改：读取动态 limit
+    user_limit = get_user_limit(st.session_state['username'])
+    total, curr = user_limit, len(my_leads)
+    
     c_stat, c_action = st.columns([2, 1])
     with c_stat:
         done = sum(1 for x in my_leads if x.get('is_contacted'))
         st.metric("今日进度", f"{done} / {total}")
-        st.progress(min(done/total, 1.0))
+        if total > 0: st.progress(min(done/total, 1.0))
+        else: st.progress(0)
+        
     with c_action:
         st.markdown("<br>", unsafe_allow_html=True)
-        # 🔥 增加“跳过验证”开关
         force_import = st.checkbox("跳过验证（强行入库）", help="如 API 故障，请勾选此项强制导入", key="force_import")
         
         if curr < total:
@@ -765,7 +808,6 @@ elif selected_nav == "Logs":
     st.markdown("#### 活动日志监控")
     d = st.date_input("选择日期", date.today())
     
-    # 🔥 FIX: 修复 Logs 页面空白问题
     try:
         if d:
             c, f = get_daily_logs(d.isoformat())
@@ -783,7 +825,6 @@ elif selected_nav == "Logs":
 
 # --- 👥 TEAM (Admin) ---
 elif selected_nav == "Team":
-    # 🔥 FIX: 修复 Team 页面空白问题
     try:
         users = pd.DataFrame(supabase.table('users').select("*").neq('role', 'admin').execute().data)
         c1, c2 = st.columns([1, 2])
@@ -800,14 +841,47 @@ elif selected_nav == "Team":
                 info = users[users['username']==u].iloc[0]
                 tc, td, hist = get_user_historical_data(u)
                 perf = get_user_daily_performance(u)
+                
+                # 获取当前限额
+                current_limit = info.get('daily_limit') or CONFIG["DAILY_QUOTA"]
+
                 st.markdown(f"### {info['real_name']}")
                 st.caption(f"账号: {info['username']} | 积分: {info.get('points', 0)} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
+                
+                # 🔥 动态调整上限功能
+                with st.container():
+                    st.markdown("#### ⚙️ 账号风控设置")
+                    col_lim, col_btn = st.columns([3, 1])
+                    with col_lim:
+                        new_daily_limit = st.slider(
+                            "每日最大任务分配上限", 
+                            min_value=0, max_value=100, 
+                            value=int(current_limit),
+                            help="调整此数值可控制该员工每天能领取的最大任务数，用于防止封号。"
+                        )
+                    with col_btn:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if st.button("保存设置"):
+                            if update_user_limit(u, new_daily_limit):
+                                st.toast(f"已更新 {info['real_name']} 的每日上限为 {new_daily_limit}")
+                                time.sleep(1); st.rerun()
+                            else: st.error("更新失败")
+                
+                st.divider()
+
                 k1, k2 = st.columns(2)
                 k1.metric("历史总领取", tc); k2.metric("历史总完成", td)
-                t1, t2, t3 = st.tabs(["每日绩效", "详细清单", "账号设置"])
+                
+                t1, t2, t3 = st.tabs(["📊 每日绩效", "📋 详细清单", "🛡️ 账号管理"])
                 with t1:
-                    if not perf.empty: st.bar_chart(perf); st.dataframe(perf, use_container_width=True)
-                    else: st.caption("暂无数据")
+                    # 🔥 每日绩效柱状图
+                    if not perf.empty: 
+                        st.markdown("#### 近 14 天绩效趋势")
+                        chart_data = perf.head(14)
+                        st.bar_chart(chart_data, color=["#4b90ff", "#ff5546"]) 
+                        with st.expander("查看详细数据表"):
+                            st.dataframe(perf, use_container_width=True)
+                    else: st.caption("暂无绩效数据")
                 with t2:
                     if not hist.empty: st.dataframe(hist, use_container_width=True)
                     else: st.caption("暂无数据")
@@ -824,7 +898,7 @@ elif selected_nav == "Team":
                     st.markdown("**危险操作**")
                     if st.button("删除账号并回收任务"): delete_user_and_recycle(u); st.rerun()
     except Exception as e:
-        st.markdown(f"""<div class="custom-alert alert-error">无法读取团队数据: {str(e)} <br>请确认已执行 SQL: ALTER TABLE users DISABLE ROW LEVEL SECURITY;</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="custom-alert alert-error">无法读取团队数据: {str(e)} <br>请确认已执行 SQL: ALTER TABLE users ADD COLUMN daily_limit INTEGER DEFAULT 25;</div>""", unsafe_allow_html=True)
 
 # --- 📥 IMPORT (Admin) ---
 elif selected_nav == "Import":
@@ -838,7 +912,6 @@ elif selected_nav == "Import":
     st.markdown("---")
     st.markdown("#### 批量进货")
     
-    # 🔥 增加“强行入库”开关 (Fail-Safe)
     force_import = st.checkbox("跳过 WhatsApp 验证 (强行入库)", help="如 API 故障，请勾选此项强制导入", key="force_import_admin")
 
     f = st.file_uploader("上传文件 (CSV/Excel)", type=['csv', 'xlsx'])
@@ -853,7 +926,6 @@ elif selected_nav == "Import":
                 s.write(f"提取到 {len(phones)} 个独立号码")
                 plist = list(phones); valid = []
                 
-                # 🔥 分支逻辑：强行入库 vs 正常验证
                 if force_import:
                     s.write("已跳过验证，所有号码视为有效...")
                     valid = plist
@@ -861,14 +933,11 @@ elif selected_nav == "Import":
                     for i in range(0, len(plist), 500):
                         batch = plist[i:i+500]
                         res, err, df_debug = process_checknumber_task(batch, CN_KEY, CN_USER)
-                        
-                        # 🔥 诊断：如果验证失败，显示返回的原始数据
                         if err != "Success" and err != "Empty List":
                             s.write(f"❌ 验证失败 ({err})")
                             if df_debug is not None:
                                 s.write("API 返回数据预览：")
                                 st.dataframe(df_debug.head())
-                        
                         valid.extend([p for p in batch if res.get(p)=='valid'])
                         time.sleep(1)
                 
@@ -877,7 +946,6 @@ elif selected_nav == "Import":
                 rows = []
                 for idx, p in enumerate(valid):
                     r = df.iloc[rmap[p][0]]; lnk = r.iloc[0]; shp = r.iloc[1] if len(r)>1 else "Shop"
-                    # 🔥 核心修正：Msg 设为空字符串 ""
                     rows.append({"shop_name":shp, "shop_link":lnk, "phone":p, "ai_message":"", "retry_count": 0, "is_frozen": False, "error_log": None})
                     if len(rows)>=100: 
                         count, msg = admin_bulk_upload_to_pool(rows)
