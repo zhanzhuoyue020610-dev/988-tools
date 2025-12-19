@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 from PIL import Image
 
 # ==========================================
-# 📦 依赖库检查
+# 依赖库检查
 # ==========================================
 try:
     from supabase import create_client, Client
@@ -36,17 +36,17 @@ except ImportError:
 warnings.filterwarnings("ignore")
 
 # ==========================================
-# 🎨 UI 主题 & 核心配置
+# UI 主题 & 核心配置
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 🔥 修复：从外部 txt 文件读取 Base64 字符串，避免代码报错
+# 读取本地 logo_b64.txt 文件
 def load_logo_b64():
     try:
         with open("logo_b64.txt", "r") as f:
             return f.read().strip()
     except FileNotFoundError:
-        return "" # 如果文件没找到，就留空，不会报错
+        return ""
 
 COMPANY_LOGO_B64 = load_logo_b64()
 
@@ -59,7 +59,7 @@ CONFIG = {
     "AI_MODEL": "gpt-4o" 
 }
 
-# 注入时钟 HTML
+# 注入时钟 HTML (保留原版悬浮设计)
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -88,7 +88,7 @@ components.html("""
     </script>
 """, height=0)
 
-# 注入 CSS
+# 注入 CSS (恢复流光、渐变、玻璃拟态风格)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -141,7 +141,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# ☁️ 数据库与核心逻辑
+# 数据库与核心逻辑
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -222,8 +222,7 @@ def update_user_limit(username, new_limit):
         return True
     except: return False
 
-# --- 🚀 报价单生成引擎 (XlsxWriter) ---
-# 🔥 核心更新：直接使用 Base64 Logo
+# --- 报价单生成引擎 (XlsxWriter) ---
 def generate_quotation_excel(items, service_fee_percent, total_domestic_freight, company_info):
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
@@ -243,25 +242,20 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     # 1. 写入表头信息 & Logo
     worksheet.merge_range('B1:H2', company_info.get('name', "义乌市万昶进出口有限公司"), fmt_header_main)
     
-    # 🔥 插入内置的 Base64 Logo
     logo_b64 = company_info.get('logo_b64')
-    if logo_b64 and len(logo_b64) > 100: # 确保有内容
+    if logo_b64 and len(logo_b64) > 100: 
         try:
-            # 解码
             logo_data = base64.b64decode(logo_b64)
             logo_io = io.BytesIO(logo_data)
-            
-            # 计算缩放
             img = Image.open(logo_io)
             width, height = img.size
             if height > 0:
-                scale = 60 / height # 目标高度 60px
+                scale = 60 / height 
                 logo_io.seek(0)
                 worksheet.insert_image('A1', 'logo.png', {'image_data': logo_io, 'x_scale': scale, 'y_scale': scale})
         except Exception as e:
-            print(f"Logo error: {e}")
+            pass
 
-    # 联系方式
     tel = company_info.get('tel', '')
     email = company_info.get('email', '')
     wechat = company_info.get('wechat', '')
@@ -273,14 +267,14 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
 
     # 2. 写入表格列名
     headers = [
-        ("序号\nNo.", 4), 
-        ("型号\nArticul", 15), 
-        ("图片\nPhoto", 15), 
-        ("名称\nName", 15), 
-        ("产品描述\nDescription", 25), 
-        ("数量\nQty", 8), 
-        ("EXW 单价 ￥\nFactory Price", 12), 
-        ("货值 ￥\nTotal Value", 12)
+        ("No.", 4), 
+        ("Articul", 15), 
+        ("Photo", 15), 
+        ("Name", 15), 
+        ("Description", 25), 
+        ("Qty", 8), 
+        ("EXW Price", 12), 
+        ("Total Value", 12)
     ]
     
     start_row = 8 
@@ -297,11 +291,11 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     for idx, item in enumerate(items, 1):
         qty = float(item.get('qty', 0))
         factory_price_unit = float(item.get('price_exw', 0))
-        
         line_total_exw = factory_price_unit * qty
         total_exw_value += line_total_exw
 
         worksheet.set_row(current_row, 80)
+        
         worksheet.write(current_row, 0, idx, fmt_cell_center)
         worksheet.write(current_row, 1, item.get('model', ''), fmt_cell_center)
         
@@ -391,10 +385,9 @@ def crop_image_exact(original_image_bytes, bbox_1000):
         return output.getvalue()
         
     except Exception as e:
-        print(f"Crop Error: {e}")
         return original_image_bytes
 
-# --- AI Parsing Logic ---
+# --- AI 解析逻辑 ---
 def parse_image_with_ai(image_file, client):
     if not image_file: return None
     
@@ -409,7 +402,7 @@ def parse_image_with_ai(image_file, client):
     1. **SCAN VERTICALLY**: Extract EVERY single variant row (e.g. 500ml, 1000ml) as a separate item.
     2. **BOUNDING BOX (STRICT)**: Return the **EXACT** bounding box for the product thumbnail image.
        - **DO NOT** include any whitespace/background outside the image.
-       - **DO NOT** try to make it square.
+       - **DO NOT** try to make it square. If the cup is tall and thin, the box should be tall and thin.
        - Return `bbox_1000`: `[ymin, xmin, ymax, xmax]` (0-1000 scale).
     
     DATA EXTRACTION RULES:
@@ -435,11 +428,9 @@ def parse_image_with_ai(image_file, client):
     }
     """
     
-    vision_model = "gpt-4o" 
-    
     try:
         res = client.chat.completions.create(
-            model=vision_model, 
+            model=CONFIG["AI_MODEL"], 
             messages=[
                 {
                     "role": "user",
@@ -453,7 +444,6 @@ def parse_image_with_ai(image_file, client):
         )
         return json.loads(res.choices[0].message.content)
     except Exception as e:
-        print(f"Vision Error: {e}")
         return None
 
 def parse_product_info_with_ai(text_content, client):
@@ -877,191 +867,191 @@ with c_user:
 st.divider()
 
 if st.session_state['role'] == 'admin':
-    menu_map = {"System": "系统监控", "Logs": "活动日志", "Team": "团队管理", "Import": "批量进货", "Quotation": "报价生成器", "WeChat": "微信管理", "Tools": "实用工具"}
-    menu_options = ["System", "Logs", "Team", "Import", "Quotation", "WeChat", "Tools"]
+    # 🔥 导航调整：Quotation 移入 Tools
+    menu_map = {"System": "系统监控", "Logs": "活动日志", "Team": "团队管理", "Import": "批量进货", "WeChat": "微信管理", "Tools": "实用工具"}
+    menu_options = ["System", "Logs", "Team", "Import", "WeChat", "Tools"]
 else:
-    menu_map = {"Workbench": "销售工作台", "Quotation": "报价生成器", "WeChat": "微信维护", "Tools": "实用工具"}
-    menu_options = ["Workbench", "Quotation", "WeChat", "Tools"]
+    # 🔥 导航调整：Quotation 移入 Tools
+    menu_map = {"Workbench": "销售工作台", "WeChat": "微信维护", "Tools": "实用工具"}
+    menu_options = ["Workbench", "WeChat", "Tools"]
 
 selected_nav = st.radio("导航菜单", menu_options, format_func=lambda x: menu_map.get(x, x), horizontal=True, label_visibility="collapsed")
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ------------------------------------------
-# 💰 Quotation (报价生成器) - 核心修改部分
+# TOOLS (包含 Quotation Generator)
 # ------------------------------------------
-if selected_nav == "Quotation":
-    if not XLSXWRITER_INSTALLED:
-        st.error("未安装 XlsxWriter 库。请联系管理员运行 `pip install XlsxWriter`")
-    else:
-        if "quote_items" not in st.session_state: st.session_state["quote_items"] = []
+if selected_nav == "Tools":
+    
+    # 子菜单 Tab
+    tab_quote, tab_trans = st.tabs(["报价生成器", "俄语语音翻译"])
+    
+    # --- 报价生成器 (Quotation) ---
+    with tab_quote:
+        if not XLSXWRITER_INSTALLED:
+            st.error("未安装 XlsxWriter 库。")
+        else:
+            if "quote_items" not in st.session_state: st.session_state["quote_items"] = []
 
-        # 双模式 TAB
-        tab_manual, tab_ai = st.tabs(["✍️ 人工录入", "🤖 AI 智能识别 (支持图片/链接)"])
-
-        # --- 模式1：人工录入 ---
-        with tab_manual:
-            with st.form("add_item_form_manual", clear_on_submit=True):
-                c_img, c_main = st.columns([1, 4])
-                with c_img:
-                    img_file = st.file_uploader("商品图片", type=['png', 'jpg', 'jpeg'])
-                with c_main:
-                    c1, c2, c3 = st.columns(3)
-                    model = c1.text_input("型号 (Articul)")
-                    name = c2.text_input("俄语名称 (Name RU)")
-                    price_exw = c3.number_input("工厂单价 (¥)", min_value=0.0, step=0.1)
-                    
-                    c4, c5 = st.columns([1, 2])
-                    qty = c4.number_input("数量 (Qty)", min_value=1, step=1)
-                    desc = c5.text_input("产品描述 (选填)")
+            # 1. 输入区域
+            with st.container():
+                st.markdown("#### 添加商品")
+                # 🔥 默认优先展示 AI 识别 (Tab 1)
+                sub_t1, sub_t2 = st.tabs(["AI 智能识别 (优先)", "人工录入"])
                 
-                if st.form_submit_button("➕ 添加到清单"):
-                    img_data = img_file.getvalue() if img_file else None
-                    item = {"model": model, "name": name, "desc": desc, "price_exw": price_exw, "qty": qty, "image_data": img_data}
-                    st.session_state["quote_items"].append(item)
-                    st.success("已添加")
-                    st.rerun()
+                with sub_t1:
+                    c_text_ai, c_img_ai = st.columns([2, 1])
+                    with c_text_ai:
+                        ai_input_text = st.text_area("粘贴文字/链接", height=100, placeholder="例如：1688 链接或聊天记录")
+                    with c_img_ai:
+                        ai_input_image = st.file_uploader("上传产品图", type=['jpg', 'png', 'jpeg'])
+                    
+                    if st.button("开始 AI 分析"):
+                        with st.status("AI 正在思考中...", expanded=True) as status:
+                            new_items = []
+                            if ai_input_image:
+                                status.write("正在进行多目标视觉分析 & 智能裁剪...")
+                                original_bytes = ai_input_image.getvalue()
+                                ai_res = parse_image_with_ai(ai_input_image, client)
+                                if ai_res and "items" in ai_res:
+                                    for raw_item in ai_res["items"]:
+                                        cropped_bytes = original_bytes
+                                        if "bbox_1000" in raw_item:
+                                            cropped_bytes = crop_image_exact(original_bytes, raw_item["bbox_1000"])
+                                        new_items.append({
+                                            "model": raw_item.get('model', ''), 
+                                            "name": raw_item.get('name_ru', 'Item'), 
+                                            "desc": raw_item.get('desc_ru', ''), 
+                                            "price_exw": float(raw_item.get('price_cny', 0)), 
+                                            "qty": int(raw_item.get('qty', 1)), 
+                                            "image_data": cropped_bytes 
+                                        })
+                            elif ai_input_text:
+                                status.write("正在理解语义...")
+                                ai_res = parse_product_info_with_ai(ai_input_text, client)
+                                if ai_res:
+                                     new_items.append({
+                                        "model": ai_res.get('model', ''), 
+                                        "name": ai_res.get('name_ru', 'Item'), 
+                                        "desc": ai_res.get('desc_ru', ''), 
+                                        "price_exw": float(ai_res.get('price_cny', 0)), 
+                                        "qty": int(ai_res.get('qty', 1)), 
+                                        "image_data": None
+                                    })
+                            
+                            if new_items:
+                                st.session_state["quote_items"].extend(new_items)
+                                status.update(label=f"成功添加 {len(new_items)} 个商品", state="complete")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                status.update(label="识别失败", state="error")
 
-        # --- 模式2：AI 智能识别 (升级版) ---
-        with tab_ai:
-            st.info("💡 提示：支持两种方式\n1. 复制 1688 链接/聊天文字\n2. 直接上传产品图片 (AI 会自动看图填表，支持多商品)")
-            
-            c_text_ai, c_img_ai = st.columns([2, 1])
-            with c_text_ai:
-                ai_input_text = st.text_area("📄 方式一：粘贴文字/链接", height=120, placeholder="例如：这款黑色的包，价格25元，我要100个")
-            with c_img_ai:
-                ai_input_image = st.file_uploader("🖼️ 方式二：上传产品图", type=['jpg', 'png', 'jpeg'])
-            
-            # AI 处理逻辑
-            if st.button("✨ 开始 AI 识别"):
-                with st.status("正在唤醒 AI 引擎...", expanded=True) as status:
-                    new_items = []
-                    
-                    # 优先处理图片
-                    if ai_input_image:
-                        status.write("👁️ 正在进行多目标视觉分析 & 智能裁剪 (Fit-to-Cell)...")
-                        
-                        original_bytes = ai_input_image.getvalue()
-                        ai_res = parse_image_with_ai(ai_input_image, client)
-                        
-                        # 处理返回的列表 (支持多商品)
-                        if ai_res and "items" in ai_res:
-                            for raw_item in ai_res["items"]:
-                                
-                                # 核心：智能裁剪 (Exact/Strict Crop)
-                                cropped_bytes = original_bytes
-                                if "bbox_1000" in raw_item:
-                                    cropped_bytes = crop_image_exact(original_bytes, raw_item["bbox_1000"])
-                                
-                                new_items.append({
-                                    "model": raw_item.get('model', ''), 
-                                    "name": raw_item.get('name_ru', 'Товар'), 
-                                    "desc": raw_item.get('desc_ru', ''), 
-                                    "price_exw": float(raw_item.get('price_cny', 0)), 
-                                    "qty": int(raw_item.get('qty', 1)), 
-                                    "image_data": cropped_bytes 
-                                })
-                        
-                    # 其次处理文字
-                    elif ai_input_text:
-                        status.write("🧠 正在理解语义...")
-                        ai_res = parse_product_info_with_ai(ai_input_text, client)
-                        if ai_res:
-                             new_items.append({
-                                "model": ai_res.get('model', ''), 
-                                "name": ai_res.get('name_ru', 'Товар'), 
-                                "desc": ai_res.get('desc_ru', ''), 
-                                "price_exw": float(ai_res.get('price_cny', 0)), 
-                                "qty": int(ai_res.get('qty', 1)), 
-                                "image_data": None
-                            })
-                    
-                    if new_items:
-                        st.session_state["quote_items"].extend(new_items)
-                        status.update(label=f"成功识别 {len(new_items)} 个商品", state="complete")
-                        time.sleep(1)
+                with sub_t2:
+                    with st.form("manual_add", clear_on_submit=True):
+                        c_img, c_main = st.columns([1, 3])
+                        with c_img:
+                            img_file = st.file_uploader("图片", type=['png', 'jpg', 'jpeg'])
+                        with c_main:
+                            c1, c2, c3 = st.columns(3)
+                            model = c1.text_input("型号 (Articul)")
+                            name = c2.text_input("名称 (RU)")
+                            price_exw = c3.number_input("工厂单价 (¥)", min_value=0.0, step=0.1)
+                            c4, c5 = st.columns([1, 2])
+                            qty = c4.number_input("数量 (Qty)", min_value=1, step=1)
+                            desc = c5.text_input("描述 (RU)")
+                        if st.form_submit_button("添加清单"):
+                            img_data = img_file.getvalue() if img_file else None
+                            st.session_state["quote_items"].append({"model": model, "name": name, "desc": desc, "price_exw": price_exw, "qty": qty, "image_data": img_data})
+                            st.success("已添加")
+                            st.rerun()
+
+            st.divider()
+
+            # 2. 清单与设置区域
+            col_list, col_setting = st.columns([2, 1])
+
+            with col_list:
+                st.markdown("#### 报价清单")
+                items = st.session_state["quote_items"]
+                if items:
+                    df_show = pd.DataFrame(items)
+                    st.dataframe(df_show[['model', 'name', 'price_exw', 'qty']], use_container_width=True)
+                    if st.button("清空清单"):
+                        st.session_state["quote_items"] = []
                         st.rerun()
-                    else:
-                        status.update(label="识别失败", state="error")
-                        st.error("无法提取有效信息，请确保图片清晰")
+                else:
+                    st.info("暂无商品")
 
-        st.divider()
+            with col_setting:
+                with st.container():
+                    st.markdown("#### 全局设置")
+                    total_freight = st.number_input("国内总运费 (¥)", min_value=0.0, step=10.0)
+                    service_fee = st.slider("服务费率 (%)", 0, 50, 5)
+                    
+                    with st.expander("表头信息设置"):
+                        co_name = st.text_input("公司名称", value="义乌市万昶进出口有限公司")
+                        co_tel = st.text_input("电话", value="+86-15157938188")
+                        co_wechat = st.text_input("WeChat", value="15157938188")
+                        co_email = st.text_input("邮箱", value="CTF1111@163.com")
+                        co_addr = st.text_input("地址", value="义乌市工人北路1121号5楼")
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+                    if items:
+                        product_total_exw = sum(i['price_exw'] * i['qty'] for i in items)
+                        service_fee_val = product_total_exw * (service_fee/100)
+                        final_val = product_total_exw + total_freight + service_fee_val
+                        
+                        st.markdown(f"""
+                        <div style="padding:15px; border:1px solid #444; border-radius:10px; background:rgba(255,255,255,0.05)">
+                            <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e">
+                                <span>工厂货值 (EXW):</span> <span>¥ {product_total_exw:,.2f}</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e; margin-top:5px;">
+                                <span>+ 国内运费:</span> <span>¥ {total_freight:,.2f}</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e; margin-top:5px;">
+                                <span>+ 服务费 ({service_fee}%):</span> <span>¥ {service_fee_val:,.2f}</span>
+                            </div>
+                            <div style="height:1px; background:#555; margin:10px 0;"></div>
+                            <div style="display:flex; justify-content:space-between; font-size:18px; font-weight:600; color:#fff">
+                                <span>总计 (Total):</span> <span>¥ {final_val:,.2f}</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-        # --- 下方：全局设置 & 预览 ---
-        col_list, col_setting = st.columns([2.5, 1.5])
+                        excel_data = generate_quotation_excel(
+                            items, service_fee, total_freight, 
+                            {
+                                "name":co_name, "tel":co_tel, "wechat":co_wechat, 
+                                "email":co_email, "addr":co_addr, "logo_b64": COMPANY_LOGO_B64
+                            }
+                        )
+                        st.download_button("下载 Excel 报价单", data=excel_data, file_name=f"Quotation_{date.today().isoformat()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
 
-        with col_list:
-            st.markdown("#### 📋 待报价商品清单")
-            items = st.session_state["quote_items"]
-            if items:
-                df_show = pd.DataFrame(items)
-                if not df_show.empty:
-                    st.dataframe(df_show[['model', 'name', 'desc', 'price_exw', 'qty']], use_container_width=True, 
-                                 column_config={"model":"型号", "name":"俄语品名", "desc":"简述", "price_exw":"工厂价", "qty":"数量"})
-                
-                if st.button("🗑️ 清空所有商品"):
-                    st.session_state["quote_items"] = []
-                    st.rerun()
-            else:
-                st.caption("暂无商品，请在上方添加")
-
-        with col_setting:
-            st.markdown("#### ⚙️ 报价单全局设置")
+    # --- Voice Translator ---
+    with tab_trans:
+        st.markdown("#### 俄语语音翻译器")
+        with st.expander("使用说明", expanded=True):
+            st.markdown("1. 从微信/WhatsApp 保存语音文件。\n2. 上传文件。\n3. AI 自动识别俄语并翻译。")
             
-            # 运费逻辑变更：独立行
-            total_freight = st.number_input("🚛 国内总运费 (Total Freight ¥)", min_value=0.0, step=10.0, help="这笔费用将单独列示在报价单底部，不会分摊到单价中")
-            service_fee = st.slider("💰 服务费率 (Profit %)", 0, 50, 5)
-            
-            with st.expander("🏢 公司表头信息 (含 Logo & WeChat)", expanded=True):
-                co_name = st.text_input("公司名称", value="义乌市万昶进出口有限公司")
-                # co_logo = st.file_uploader("公司 Logo (可选)", type=['png', 'jpg', 'jpeg'], key="co_logo")
-                co_tel = st.text_input("电话", value="+86-15157938188")
-                co_wechat = st.text_input("WeChat ID", value="15157938188") # 新增 WeChat
-                co_email = st.text_input("邮箱", value="CTF1111@163.com")
-                co_addr = st.text_input("地址", value="义乌市工人北路1121号5楼")
-            
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            if items:
-                # 预览最终价格
-                product_total_exw = sum(i['price_exw'] * i['qty'] for i in items)
-                service_fee_val = product_total_exw * (service_fee/100)
-                final_val = product_total_exw + total_freight + service_fee_val
+        uploaded_audio = st.file_uploader("上传语音 (mp3, wav, m4a)", type=['mp3', 'wav', 'm4a', 'ogg', 'webm'])
+        if uploaded_audio and st.button("开始翻译"):
+            with st.status("正在处理...", expanded=True) as status:
+                status.write("正在听写俄语...")
+                ru_text, cn_text = transcribe_audio(client, uploaded_audio)
+                status.write("正在翻译成中文...")
+                time.sleep(1)
+                status.update(label="完成", state="complete")
                 
-                st.markdown(f"""
-                <div style="padding:15px; border:1px solid #444; border-radius:10px; background:rgba(255,255,255,0.05)">
-                    <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e">
-                        <span>工厂货值 (EXW Total):</span> <span>¥ {product_total_exw:,.2f}</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e; margin-top:5px;">
-                        <span>+ 国内运费:</span> <span>¥ {total_freight:,.2f}</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e; margin-top:5px;">
-                        <span>+ 服务费 ({service_fee}%):</span> <span>¥ {service_fee_val:,.2f}</span>
-                    </div>
-                    <div style="height:1px; background:#555; margin:10px 0;"></div>
-                    <div style="display:flex; justify-content:space-between; font-size:18px; font-weight:600; color:#fff">
-                        <span>总计 (Grand Total):</span> <span>¥ {final_val:,.2f}</span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # logo_bytes = co_logo.getvalue() if co_logo else None
-                
-                excel_data = generate_quotation_excel(
-                    items, service_fee, total_freight, 
-                    {
-                        "name":co_name, "tel":co_tel, "wechat":co_wechat, 
-                        "email":co_email, "addr":co_addr, "logo_b64": COMPANY_LOGO_B64
-                    }
-                )
-                
-                st.download_button(
-                    label="📥 导出 Excel 报价单",
-                    data=excel_data,
-                    file_name=f"Quotation_{date.today().isoformat()}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary"
-                )
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**俄语原文**")
+                    st.info(ru_text)
+                with c2:
+                    st.markdown("**中文翻译**")
+                    st.success(cn_text)
 
 # ------------------------------------------
 # (其他模块保持不变)
@@ -1152,38 +1142,6 @@ elif selected_nav == "WeChat":
                                 time.sleep(1); st.rerun()
         except Exception as e:
             st.markdown(f"""<div class="custom-alert alert-error">数据加载失败: {str(e)} (请检查 RLS)</div>""", unsafe_allow_html=True)
-
-# --- 🎙️ TOOLS (Voice Translator) ---
-elif selected_nav == "Tools":
-    st.markdown("#### 🎙️ 俄语语音翻译器 (Whisper)")
-    
-    with st.expander("📝 使用说明 (必读)", expanded=True):
-        st.markdown("""
-        1. **获取语音：** 从微信/WhatsApp 长按语音消息 -> 保存为文件（支持 mp3, wav, m4a）。
-        2. **上传：** 点击下方按钮上传。
-        3. **查看：** AI 会自动识别俄语内容，并翻译成中文。
-        """)
-        
-    uploaded_audio = st.file_uploader("上传语音文件", type=['mp3', 'wav', 'm4a', 'ogg', 'webm'])
-    
-    if uploaded_audio:
-        if st.button("开始识别与翻译"):
-            with st.status("正在呼叫 AI 大脑...", expanded=True) as status:
-                status.write("👂 正在听写俄语...")
-                ru_text, cn_text = transcribe_audio(client, uploaded_audio)
-                
-                status.write("🧠 正在翻译成中文...")
-                time.sleep(1)
-                status.update(label="处理完成", state="complete")
-                
-                st.markdown("---")
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("**🇷🇺 俄语原文**")
-                    st.info(ru_text)
-                with c2:
-                    st.markdown("**🇨🇳 中文翻译**")
-                    st.success(cn_text)
 
 # --- 💼 WORKBENCH (Sales) ---
 elif selected_nav == "Workbench":
