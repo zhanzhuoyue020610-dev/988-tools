@@ -15,6 +15,7 @@ import base64
 import smtplib
 from email.mime.text import MIMEText
 from email.header import Header
+from email.utils import formataddr
 from datetime import date, datetime, timedelta
 import concurrent.futures
 import streamlit.components.v1 as components
@@ -265,14 +266,17 @@ def update_user_email_config(username, config_dict):
 # 邮件处理核心引擎 (SMTP + IMAP)
 # ==========================================
 class EmailEngine:
-    def __init__(self, config):
+    def __init__(self, config, sender_name="Sales"):
         self.config = config 
+        self.sender_name = sender_name
 
     def send_email(self, to_email, subject, body_html):
         if not self.config: return False, "配置缺失"
         try:
             msg = MIMEText(body_html, 'html', 'utf-8')
-            msg['From'] = Header(self.config['email'], 'utf-8')
+            # 🔥 智能发件人设置：姓名 | 988 Group <email>
+            display_from = f"{self.sender_name} | 988 Group"
+            msg['From'] = formataddr((Header(display_from, 'utf-8').encode(), self.config['email']))
             msg['To'] = to_email
             msg['Subject'] = Header(subject, 'utf-8')
 
@@ -483,13 +487,22 @@ def get_daily_motivation(client):
         except: st.session_state["motivation_quote"] = random.choice(local_quotes)
     return st.session_state["motivation_quote"]
 
-def ai_generate_email_reply(client, thread_content, context):
+# 🔥 核心升级：AI 生成开发信 (必须提及店铺名和产品)
+def ai_generate_email_reply(client, context, user_real_name, shop_name):
     prompt = f"""
-    Role: Logistics Sales Rep (Russia Market).
-    Context: {context}
-    Email Thread: {thread_content}
-    Task: Draft a reply in Russian. Professional, concise. No emojis.
-    Output: JSON {{ "subject": "...", "body_html": "..." }}
+    Role: Professional Logistics Sales Rep from 988 Group (China to Russia Logistics).
+    My Name: {user_real_name}
+    Target Client: {shop_name} (Ozon Seller).
+    
+    Task: Write a cold email in Russian.
+    Requirements:
+    1. Subject: Attractive, mention logistics/shipping savings for {shop_name}.
+    2. Opening: "Hello team at {shop_name}, I saw your store on Ozon and..."
+    3. Context: Infer what they sell based on the shop name (e.g. if name is "ToyStore", mention toys).
+    4. Offer: We provide fast customs clearance and white tax compliance for their specific products.
+    5. No emojis. Professional tone.
+    
+    Output JSON: {{ "subject": "...", "body_html": "..." }} (Use <br> for line breaks)
     """
     try:
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}], response_format={"type": "json_object"})
@@ -630,16 +643,20 @@ def admin_bulk_upload_to_pool(rows_to_insert):
     if not supabase or not rows_to_insert: return 0, "No data"
     success_count = 0
     try:
-        incoming = [str(r['phone']) for r in rows_to_insert]
+        incoming = [str(r['phone']) for r in rows_to_insert if r['phone']]
         existing = set()
         chunk_size = 500
-        for i in range(0, len(incoming), chunk_size):
-            batch = incoming[i:i+chunk_size]
-            res = supabase.table('leads').select('phone').in_('phone', batch).execute()
-            for item in res.data: existing.add(str(item['phone']))
         
-        final_rows = [r for r in rows_to_insert if str(r['phone']) not in existing]
-        if not final_rows: return 0, "全部号码已存在"
+        if incoming:
+            for i in range(0, len(incoming), chunk_size):
+                batch = incoming[i:i+chunk_size]
+                res = supabase.table('leads').select('phone').in_('phone', batch).execute()
+                for item in res.data: existing.add(str(item['phone']))
+        
+        # 允许入库：如果手机号不存在 或者 只有邮箱
+        final_rows = [r for r in rows_to_insert if (not r['phone']) or (str(r['phone']) not in existing)]
+        
+        if not final_rows: return 0, "重复数据"
         
         for row in final_rows: row['username'] = st.session_state.get('username', 'admin')
         response = supabase.table('leads').insert(final_rows).execute()
@@ -886,7 +903,8 @@ if selected_nav == "Settings":
 elif selected_nav == "Workbench":
     # 检查邮箱配置
     user_conf = get_user_email_config(st.session_state['username'])
-    email_engine = EmailEngine(user_conf) if user_conf else None
+    # 传入真实姓名用于发件人显示
+    email_engine = EmailEngine(user_conf, st.session_state.get('real_name', 'Sales')) if user_conf else None
     
     if not email_engine:
         st.markdown("""<div class="custom-alert alert-error">请先在 [邮箱配置] 中设置您的发件箱信息</div>""", unsafe_allow_html=True)
@@ -928,7 +946,13 @@ elif selected_nav == "Workbench":
                 with t_compose:
                     if st.button("✨ AI 自动生成俄语开发信"):
                         with st.status("AI 正在撰写...", expanded=True):
-                            draft = ai_generate_email_reply(client, "Cold Outreach", f"Client: {lead.get('shop_name')}, Sell Logistics Services")
+                            # 🔥 调用更新后的 AI 生成逻辑
+                            draft = ai_generate_email_reply(
+                                client, 
+                                "Cold Outreach", 
+                                st.session_state.get('real_name', 'Sales'),
+                                lead.get('shop_name', 'Ozon Seller')
+                            )
                             if draft:
                                 st.session_state['mail_subj'] = draft.get('subject')
                                 st.session_state['mail_body'] = draft.get('body_html')
@@ -970,7 +994,6 @@ elif selected_nav == "Workbench":
                 st.info("请从左侧选择一个客户")
 
     elif mode == "WhatsApp 开发":
-        # 原有的 WA 逻辑
         my_leads = get_todays_leads(st.session_state['username'], client)
         user_limit = get_user_limit(st.session_state['username'])
         total, curr = user_limit, len(my_leads)
@@ -1205,15 +1228,15 @@ elif selected_nav == "System" and st.session_state['role'] == 'admin':
     st.markdown("#### 系统健康状态")
     health = check_api_health(CN_USER, CN_KEY, OPENAI_KEY)
     
-    c1, c2, c3 = st.columns(3)
+    k1, k2, k3 = st.columns(3)
     def status_pill(title, is_active, detail):
         dot = "dot-green" if is_active else "dot-red"
         text = "运行正常" if is_active else "连接异常"
         st.markdown(f"""<div style="background-color:rgba(30, 31, 32, 0.6); backdrop-filter:blur(10px); padding:20px; border-radius:16px;"><div style="font-size:14px; color:#c4c7c5;">{title}</div><div style="margin-top:10px; font-size:16px; color:white; font-weight:500;"><span class="status-dot {dot}"></span>{text}</div><div style="font-size:12px; color:#8e8e8e; margin-top:5px;">{detail}</div></div>""", unsafe_allow_html=True)
 
-    with c1: status_pill("云数据库", health['supabase'], "Supabase")
-    with c2: status_pill("验证接口", health['checknumber'], "CheckNumber")
-    with c3: status_pill("AI 引擎", health['openai'], f"OpenAI ({CONFIG['AI_MODEL']})")
+    with k1: status_pill("云数据库", health['supabase'], "Supabase")
+    with k2: status_pill("验证接口", health['checknumber'], "CheckNumber")
+    with k3: status_pill("AI 引擎", health['openai'], f"OpenAI ({CONFIG['AI_MODEL']})")
     
     if health['msg']:
         st.markdown(f"""<div class="custom-alert alert-error">诊断报告: {'; '.join(health['msg'])}</div>""", unsafe_allow_html=True)
@@ -1315,35 +1338,30 @@ elif selected_nav == "Import":
             df = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
             st.info(f"解析到 {len(df)} 行数据")
             with st.status("正在处理...", expanded=True) as s:
-                # 针对您上传的表二文件结构进行优化
-                # 1. 提取邮箱
                 rows = []
                 for _, r in df.iterrows():
                     row_str = " ".join([str(x) for x in r.values])
                     emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', row_str)
-                    
-                    # 2. 提取电话
                     phones = extract_all_numbers(r)
                     
-                    # 优先入库逻辑：只要有邮箱或电话就入库
                     if emails or phones:
                         email = emails[0] if emails else None
-                        phone = phones[0] if phones else None # 取第一个有效号码
+                        phone = phones[0] if phones else None 
                         
-                        # 如果没有跳过验证且有电话，则验证WhatsApp
                         if phone and not force:
                             res, _, _ = process_checknumber_task([phone], CN_KEY, CN_USER)
-                            if res.get(phone) != 'valid':
-                                phone = None # 验证失败则置空电话，但仍保留邮箱入库
+                            if res.get(phone) != 'valid': phone = None
                         
-                        # 只有当两者皆空时才跳过
                         if not email and not phone: continue
 
+                        # 尝试智能提取店铺名 (通常在第二列)
+                        shop_name = str(r.iloc[1]) if len(r) > 1 else 'Shop'
+                        
                         rows.append({
                             "email": email,
                             "phone": phone,
-                            "shop_name": str(r.get('店铺名称', 'Shop')), 
-                            "shop_link": str(r.get('店铺链接', '')),
+                            "shop_name": shop_name,
+                            "shop_link": str(r.iloc[0]) if len(r) > 0 else '',
                             "ai_message": "",
                             "retry_count": 0, 
                             "is_frozen": False
