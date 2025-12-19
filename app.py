@@ -45,8 +45,7 @@ CONFIG = {
     "LOW_STOCK_THRESHOLD": 300,
     "POINTS_PER_TASK": 10,
     "POINTS_WECHAT_TASK": 5,
-    # 建议使用 gpt-4o 以获得最佳的 1688 截图识别效果
-    "AI_MODEL": "gpt-4o" 
+    "AI_MODEL": "gpt-4o" # 保持 gpt-4o 以处理复杂的列表截图
 }
 
 # 注入时钟 HTML
@@ -213,7 +212,6 @@ def update_user_limit(username, new_limit):
     except: return False
 
 # --- 🚀 报价单生成引擎 (XlsxWriter) ---
-# 🔥 逻辑：运费独立成行，不再分摊到单价
 def generate_quotation_excel(items, service_fee_percent, total_domestic_freight, company_info):
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
@@ -261,9 +259,7 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         qty = float(item.get('qty', 0))
         factory_price_unit = float(item.get('price_exw', 0))
         
-        # 逻辑：直接在出厂价上加服务费，不含运费
         final_unit_price = factory_price_unit * (1 + service_fee_percent / 100.0)
-        
         line_total = final_unit_price * qty
         total_product_value += line_total
 
@@ -285,15 +281,12 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         
         current_row += 1
 
-    # 4. 底部合计 - 逻辑：添加单独的运费行
-    
-    # 运费行
+    # 4. 底部合计
     if total_domestic_freight > 0:
         worksheet.merge_range(current_row, 0, current_row, 6, "Domestic Freight (China) / 中国国内运费", fmt_total_row)
         worksheet.write(current_row, 7, total_domestic_freight, fmt_total_money)
         current_row += 1
     
-    # 最终总计
     grand_total = total_product_value + total_domestic_freight
     
     worksheet.merge_range(current_row, 0, current_row, 6, "GRAND TOTAL / 合计总额", fmt_total_row)
@@ -304,40 +297,40 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     return output
 
 # --- AI Parsing Logic ---
-# 🔥 重大升级：专门针对 1688/淘宝 截图优化的 Prompt
+# 🔥 终极升级：表格/列表扫描模式 (Table Scanning Mode)
 def parse_image_with_ai(image_file, client):
     if not image_file: return None
     
-    # 编码图片为 base64
     base64_image = base64.b64encode(image_file.getvalue()).decode('utf-8')
     
-    # 针对 1688 截图的专用系统级指令
+    # 核心指令：强制 AI 扫描表格行，而不是识别“物体”
     prompt = """
-    Role: You are an expert Procurement Data Entry Specialist for 1688.com and Taobao.
-    Task: Extract product details from the provided screenshot accurately.
+    Role: You are an advanced OCR & Data Extraction engine specialized in Chinese E-commerce Order Forms (1688/Taobao).
     
-    🔍 Visual Analysis Rules (Crucial for 1688 Screenshots):
-    1. **Product Name**: Look for the main black text, usually at the top or next to the product image. Translate it to Russian.
-    2. **Price (EXW)**: 
-       - Look for the LARGE orange or red number with the "¥" symbol.
-       - If there is a tiered price (e.g., 3-99 pcs ¥10, 100+ pcs ¥9), pick the **lowest quantity tier price** (the most expensive one) to be safe, or the middle one.
-       - **IGNORE** crossed-out numbers (original prices).
-       - **IGNORE** shipping fees (运费).
-    3. **Model/Spec**: Look for text like "颜色分类" (Color), "规格" (Spec), or text selected in a box (e.g., "Black", "XL").
-    4. **Quantity**: Look for the number in the input box or near "x" (e.g., x100). If not found, default to 1.
+    CONTEXT: The user has uploaded a screenshot of a product list.
+    CRITICAL CHALLENGE: The screenshot likely contains ONE main product image, but MULTIPLE variants listed in rows (e.g., 500ml, 750ml, 1000ml).
     
-    Output Format:
-    Return ONLY a JSON object (no markdown formatting, no explanations):
+    YOUR MISSION:
+    1. **SCAN FOR TEXT ROWS**: Do not just look at the image. Look at the text lines next to or below the image.
+    2. **EXTRACT VARIANTS**: If you see "500ml ... x10" and "1000ml ... x20", these are TWO separate items.
+    3. **IGNORE THUMBNAILS**: Visual similarity does not matter. Differentiate items by their SPECIFICATIONS (ml, size, color) in the text.
+    
+    DATA EXTRACTION RULES:
+    - **Name**: Main product name (Translate to Russian).
+    - **Model/Spec**: Extract the distinguishing text for this row (e.g., "500ml", "Blue", "Set A").
+    - **Desc**: ULTRA SHORT summary (max 5 words). E.g., "Plastic Cup 500ml". Translate to Russian.
+    - **Price**: Extract the price for *this specific row*.
+    - **Qty**: Extract quantity for *this specific row*.
+    
+    Output Format (JSON):
     {
-        "name_ru": "Translating the product name to Russian...",
-        "model": "Extracted Model/Color/Size",
-        "desc_ru": "Brief material/feature description in Russian",
-        "price_cny": 0.00,
-        "qty": 1
+        "items": [
+            { "name_ru": "...", "model": "500ml", "desc_ru": "...", "price_cny": 5.5, "qty": 100 },
+            { "name_ru": "...", "model": "1000ml", "desc_ru": "...", "price_cny": 8.5, "qty": 50 }
+        ]
     }
     """
     
-    # 优先使用 gpt-4o，因为其视觉能力远强于 mini
     vision_model = "gpt-4o" 
     
     try:
@@ -356,50 +349,24 @@ def parse_image_with_ai(image_file, client):
         )
         return json.loads(res.choices[0].message.content)
     except Exception as e:
-        # 如果 gpt-4o 失败（比如账号没权限），则回退到默认配置的模型
-        print(f"Vision Error with gpt-4o: {e}, falling back to {CONFIG['AI_MODEL']}")
-        try:
-            res = client.chat.completions.create(
-                model=CONFIG["AI_MODEL"],
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                        ]
-                    }
-                ],
-                response_format={"type": "json_object"}
-            )
-            return json.loads(res.choices[0].message.content)
-        except Exception as e2:
-            return None
+        print(f"Vision Error: {e}")
+        return None
 
 def parse_product_info_with_ai(text_content, client):
     if not text_content: return None
     
     prompt = f"""
-    You are a professional B2B trade assistant for a China-to-Russia logistics company.
-    Analyze the following user input (which may contain a 1688/Taobao URL, chat logs, or product descriptions).
+    You are a professional B2B trade assistant.
+    Analyze the user input.
     
-    Tasks:
-    1. Identify the **Product Name** and Translate it to **Russian**.
-    2. Identify the **Quantity** (Default to 1 if unknown).
-    3. Identify the **Unit Price** (in CNY/RMB).
-    4. Identify the **Model/Color** if available.
-    5. Extract a short **Description** (Material, Size, etc.) and translate to Russian.
-    
-    Input Text:
-    {text_content}
-    
+    Output Format:
     Return ONLY a JSON object:
     {{
         "name_ru": "...",
         "model": "...",
         "price_cny": 0.0,
         "qty": 0,
-        "desc_ru": "..."
+        "desc_ru": "Short summary (under 5 words)"
     }}
     """
     try:
@@ -852,7 +819,7 @@ if selected_nav == "Quotation":
 
         # --- 模式2：AI 智能识别 (升级版) ---
         with tab_ai:
-            st.info("💡 提示：支持两种方式\n1. 复制 1688 链接/聊天文字\n2. 直接上传产品图片 (AI 会自动看图填表)")
+            st.info("💡 提示：支持两种方式\n1. 复制 1688 链接/聊天文字\n2. 直接上传产品图片 (AI 会自动看图填表，支持多商品)")
             
             c_text_ai, c_img_ai = st.columns([2, 1])
             with c_text_ai:
@@ -863,42 +830,47 @@ if selected_nav == "Quotation":
             # AI 处理逻辑
             if st.button("✨ 开始 AI 识别"):
                 with st.status("正在唤醒 AI 引擎...", expanded=True) as status:
-                    item = None
+                    new_items = []
+                    
                     # 优先处理图片
                     if ai_input_image:
-                        status.write("👁️ 正在进行视觉分析 (针对 1688 截图优化)...")
+                        status.write("👁️ 正在进行多目标视觉分析...")
                         ai_res = parse_image_with_ai(ai_input_image, client)
-                        if ai_res:
-                            item = {
-                                "model": ai_res.get('model', ''), 
-                                "name": ai_res.get('name_ru', 'Товар'), 
-                                "desc": ai_res.get('desc_ru', ''), 
-                                "price_exw": float(ai_res.get('price_cny', 0)), 
-                                "qty": int(ai_res.get('qty', 1)), 
-                                "image_data": ai_input_image.getvalue() # 直接使用上传的图
-                            }
+                        
+                        # 处理返回的列表 (支持多商品)
+                        if ai_res and "items" in ai_res:
+                            for raw_item in ai_res["items"]:
+                                new_items.append({
+                                    "model": raw_item.get('model', ''), 
+                                    "name": raw_item.get('name_ru', 'Товар'), 
+                                    "desc": raw_item.get('desc_ru', ''), 
+                                    "price_exw": float(raw_item.get('price_cny', 0)), 
+                                    "qty": int(raw_item.get('qty', 1)), 
+                                    "image_data": ai_input_image.getvalue() # 使用同一张图
+                                })
+                        
                     # 其次处理文字
                     elif ai_input_text:
                         status.write("🧠 正在理解语义...")
                         ai_res = parse_product_info_with_ai(ai_input_text, client)
                         if ai_res:
-                            item = {
+                             new_items.append({
                                 "model": ai_res.get('model', ''), 
                                 "name": ai_res.get('name_ru', 'Товар'), 
                                 "desc": ai_res.get('desc_ru', ''), 
                                 "price_exw": float(ai_res.get('price_cny', 0)), 
                                 "qty": int(ai_res.get('qty', 1)), 
                                 "image_data": None
-                            }
+                            })
                     
-                    if item:
-                        st.session_state["quote_items"].append(item)
-                        status.update(label="识别成功，已加入清单", state="complete")
+                    if new_items:
+                        st.session_state["quote_items"].extend(new_items)
+                        status.update(label=f"成功识别 {len(new_items)} 个商品", state="complete")
                         time.sleep(1)
                         st.rerun()
                     else:
                         status.update(label="识别失败", state="error")
-                        st.error("无法提取有效信息，请重试")
+                        st.error("无法提取有效信息，请确保图片清晰")
 
         st.divider()
 
@@ -911,8 +883,8 @@ if selected_nav == "Quotation":
             if items:
                 df_show = pd.DataFrame(items)
                 if not df_show.empty:
-                    st.dataframe(df_show[['model', 'name', 'price_exw', 'qty']], use_container_width=True, 
-                                 column_config={"model":"型号", "name":"俄语品名", "price_exw":"工厂价", "qty":"数量"})
+                    st.dataframe(df_show[['model', 'name', 'desc', 'price_exw', 'qty']], use_container_width=True, 
+                                 column_config={"model":"型号", "name":"俄语品名", "desc":"简述", "price_exw":"工厂价", "qty":"数量"})
                 
                 if st.button("🗑️ 清空所有商品"):
                     st.session_state["quote_items"] = []
