@@ -11,7 +11,7 @@ import os
 import hashlib
 import random
 import json
-import base64  # 新增：用于处理图片编码
+import base64
 from datetime import date, datetime, timedelta
 import concurrent.futures
 import streamlit.components.v1 as components
@@ -45,10 +45,11 @@ CONFIG = {
     "LOW_STOCK_THRESHOLD": 300,
     "POINTS_PER_TASK": 10,
     "POINTS_WECHAT_TASK": 5,
-    "AI_MODEL": "gpt-4o-mini" # 支持视觉识别的高性价比模型
+    # 建议使用 gpt-4o 以获得最佳的 1688 截图识别效果
+    "AI_MODEL": "gpt-4o" 
 }
 
-# 注入时钟 HTML (保持原样)
+# 注入时钟 HTML
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -60,7 +61,7 @@ st.markdown("""
 ">Initialize...</div>
 """, unsafe_allow_html=True)
 
-# 注入 JS (保持原样)
+# 注入 JS
 components.html("""
     <script>
         function updateClock() {
@@ -77,7 +78,7 @@ components.html("""
     </script>
 """, height=0)
 
-# 注入 CSS (保持原样)
+# 注入 CSS
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -130,7 +131,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# ☁️ 数据库与核心逻辑 (保持原样)
+# ☁️ 数据库与核心逻辑
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -211,8 +212,8 @@ def update_user_limit(username, new_limit):
         return True
     except: return False
 
-# --- 🚀 报价单生成引擎 (XlsxWriter) - 重构版 ---
-# 🔥 更新：运费独立成行，不再分摊到单价
+# --- 🚀 报价单生成引擎 (XlsxWriter) ---
+# 🔥 逻辑：运费独立成行，不再分摊到单价
 def generate_quotation_excel(items, service_fee_percent, total_domestic_freight, company_info):
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
@@ -236,7 +237,7 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     worksheet.merge_range('A4:H4', f"Address: {company_info.get('addr', '')}", fmt_header_sub)
     worksheet.merge_range('A6:H6', "* This price is valid for 10 days / Эта цена действительна в течение 10 дней", fmt_bold_red)
 
-    # 2. 写入表格列名 (精简版)
+    # 2. 写入表格列名
     headers = [
         ("序号\nNo.", 4), 
         ("型号\nArticul", 15), 
@@ -260,7 +261,7 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         qty = float(item.get('qty', 0))
         factory_price_unit = float(item.get('price_exw', 0))
         
-        # 逻辑变更：直接在出厂价上加服务费，不含运费
+        # 逻辑：直接在出厂价上加服务费，不含运费
         final_unit_price = factory_price_unit * (1 + service_fee_percent / 100.0)
         
         line_total = final_unit_price * qty
@@ -284,7 +285,7 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         
         current_row += 1
 
-    # 4. 底部合计 - 逻辑更新：添加单独的运费行
+    # 4. 底部合计 - 逻辑：添加单独的运费行
     
     # 运费行
     if total_domestic_freight > 0:
@@ -303,33 +304,45 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     return output
 
 # --- AI Parsing Logic ---
-# 🔥 更新：支持图片识别 (GPT-4o Vision)
+# 🔥 重大升级：专门针对 1688/淘宝 截图优化的 Prompt
 def parse_image_with_ai(image_file, client):
     if not image_file: return None
     
     # 编码图片为 base64
     base64_image = base64.b64encode(image_file.getvalue()).decode('utf-8')
     
+    # 针对 1688 截图的专用系统级指令
     prompt = """
-    You are a professional B2B trade assistant. Analyze this product image.
-    Extract the following details to fill a quotation sheet for a Russian client:
-    1. Product Name (Translate to Russian).
-    2. Approximate Model/Type (if visible).
-    3. Short Description (Color, material, key features - in Russian).
-    4. Suggest a Quantity (default 1).
+    Role: You are an expert Procurement Data Entry Specialist for 1688.com and Taobao.
+    Task: Extract product details from the provided screenshot accurately.
     
-    Return ONLY a JSON object:
+    🔍 Visual Analysis Rules (Crucial for 1688 Screenshots):
+    1. **Product Name**: Look for the main black text, usually at the top or next to the product image. Translate it to Russian.
+    2. **Price (EXW)**: 
+       - Look for the LARGE orange or red number with the "¥" symbol.
+       - If there is a tiered price (e.g., 3-99 pcs ¥10, 100+ pcs ¥9), pick the **lowest quantity tier price** (the most expensive one) to be safe, or the middle one.
+       - **IGNORE** crossed-out numbers (original prices).
+       - **IGNORE** shipping fees (运费).
+    3. **Model/Spec**: Look for text like "颜色分类" (Color), "规格" (Spec), or text selected in a box (e.g., "Black", "XL").
+    4. **Quantity**: Look for the number in the input box or near "x" (e.g., x100). If not found, default to 1.
+    
+    Output Format:
+    Return ONLY a JSON object (no markdown formatting, no explanations):
     {
-        "name_ru": "...",
-        "model": "...",
-        "desc_ru": "...",
+        "name_ru": "Translating the product name to Russian...",
+        "model": "Extracted Model/Color/Size",
+        "desc_ru": "Brief material/feature description in Russian",
+        "price_cny": 0.00,
         "qty": 1
     }
     """
     
+    # 优先使用 gpt-4o，因为其视觉能力远强于 mini
+    vision_model = "gpt-4o" 
+    
     try:
         res = client.chat.completions.create(
-            model=CONFIG["AI_MODEL"], # 确保使用支持 Vision 的模型 (gpt-4o 或 gpt-4o-mini)
+            model=vision_model, 
             messages=[
                 {
                     "role": "user",
@@ -343,7 +356,25 @@ def parse_image_with_ai(image_file, client):
         )
         return json.loads(res.choices[0].message.content)
     except Exception as e:
-        return None
+        # 如果 gpt-4o 失败（比如账号没权限），则回退到默认配置的模型
+        print(f"Vision Error with gpt-4o: {e}, falling back to {CONFIG['AI_MODEL']}")
+        try:
+            res = client.chat.completions.create(
+                model=CONFIG["AI_MODEL"],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        ]
+                    }
+                ],
+                response_format={"type": "json_object"}
+            )
+            return json.loads(res.choices[0].message.content)
+        except Exception as e2:
+            return None
 
 def parse_product_info_with_ai(text_content, client):
     if not text_content: return None
@@ -381,7 +412,7 @@ def parse_product_info_with_ai(text_content, client):
     except Exception as e:
         return None
 
-# --- AI Logic (Generic) (保持原样) ---
+# --- AI Logic (Generic) ---
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
         local_quotes = ["心有繁星，沐光而行。", "坚持是另一种形式的天赋。", "沉稳是职场最高级的修养。", "每一步都算数。", "保持专注，未来可期。"]
@@ -457,7 +488,7 @@ def transcribe_audio(client, audio_file):
     except Exception as e:
         return f"Error: {str(e)}", "Translation Failed"
 
-# --- WeChat Logic (保持原样) ---
+# --- WeChat Logic ---
 def get_wechat_tasks(username):
     if not supabase: return []
     today = date.today().isoformat()
@@ -491,7 +522,7 @@ def admin_import_wechat_customers(df_raw):
         return True
     except: return False
 
-# --- WA Logic (保持原样) ---
+# --- WA Logic ---
 def get_user_daily_performance(username):
     if not supabase: return pd.DataFrame()
     try:
@@ -713,7 +744,7 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🔐 登录页 (保持原样)
+# 🔐 登录页
 # ==========================================
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 
@@ -835,14 +866,14 @@ if selected_nav == "Quotation":
                     item = None
                     # 优先处理图片
                     if ai_input_image:
-                        status.write("👁️ 正在进行视觉分析...")
+                        status.write("👁️ 正在进行视觉分析 (针对 1688 截图优化)...")
                         ai_res = parse_image_with_ai(ai_input_image, client)
                         if ai_res:
                             item = {
                                 "model": ai_res.get('model', ''), 
                                 "name": ai_res.get('name_ru', 'Товар'), 
                                 "desc": ai_res.get('desc_ru', ''), 
-                                "price_exw": 0.0, # 图片很难识别准确价格，通常设为0待填
+                                "price_exw": float(ai_res.get('price_cny', 0)), 
                                 "qty": int(ai_res.get('qty', 1)), 
                                 "image_data": ai_input_image.getvalue() # 直接使用上传的图
                             }
