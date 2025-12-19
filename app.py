@@ -213,7 +213,7 @@ def update_user_limit(username, new_limit):
     except: return False
 
 # --- 🚀 报价单生成引擎 (XlsxWriter) ---
-# 🔥 核心升级：修复 ValueError，确保传递 BytesIO 对象
+# 🔥 核心更新：服务费分离、Logo支持、WeChat显示
 def generate_quotation_excel(items, service_fee_percent, total_domestic_freight, company_info):
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
@@ -230,12 +230,32 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     fmt_total_row = workbook.add_format({'bold': True, 'font_size': 11, 'align': 'right', 'valign': 'vcenter', 'border': 1, 'bg_color': '#e6e6e6'})
     fmt_total_money = workbook.add_format({'bold': True, 'font_size': 11, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'num_format': '¥#,##0.00', 'bg_color': '#e6e6e6'})
 
-    # 1. 写入表头信息
-    worksheet.merge_range('A1:H2', company_info.get('name', "义乌市万昶进出口有限公司"), fmt_header_main)
-    contact_text = f"TEL: {company_info.get('tel', '')}    E-mail: {company_info.get('email', '')}"
-    worksheet.merge_range('A3:H3', contact_text, fmt_header_sub)
-    worksheet.merge_range('A4:H4', f"Address: {company_info.get('addr', '')}", fmt_header_sub)
-    worksheet.merge_range('A6:H6', "* This price is valid for 10 days / Эта цена действительна в течение 10 дней", fmt_bold_red)
+    # 1. 写入表头信息 & Logo
+    # Logo 放在左上角 A1，标题合并从 B 开始
+    worksheet.merge_range('B1:H2', company_info.get('name', "义乌市万昶进出口有限公司"), fmt_header_main)
+    
+    # 插入 Logo (如果有)
+    if company_info.get('logo_bytes'):
+        try:
+            logo_io = io.BytesIO(company_info['logo_bytes'])
+            # 尝试缩放 Logo 到合适大小 (例如高度 60px 左右)
+            img = Image.open(logo_io)
+            width, height = img.size
+            if height > 0:
+                scale = 60 / height
+                logo_io.seek(0)
+                worksheet.insert_image('A1', 'logo.png', {'image_data': logo_io, 'x_scale': scale, 'y_scale': scale})
+        except: pass
+
+    # 联系方式 (新增 WeChat)
+    tel = company_info.get('tel', '')
+    email = company_info.get('email', '')
+    wechat = company_info.get('wechat', '')
+    contact_text = f"TEL: {tel}    WeChat: {wechat}\nE-mail: {email}"
+    
+    worksheet.merge_range('A3:H4', contact_text, fmt_header_sub)
+    worksheet.merge_range('A5:H5', f"Address: {company_info.get('addr', '')}", fmt_header_sub)
+    worksheet.merge_range('A7:H7', "* This price is valid for 10 days / Эта цена действительна в течение 10 дней", fmt_bold_red)
 
     # 2. 写入表格列名
     headers = [
@@ -245,7 +265,7 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         ("名称\nName", 15), 
         ("产品描述\nDescription", 25), 
         ("数量\nQty", 8), 
-        ("单价 ￥\nPrice", 12), 
+        ("EXW 单价 ￥\nFactory Price", 12), # 修改表头，明确是工厂价
         ("货值 ￥\nTotal Value", 12)
     ]
     
@@ -255,9 +275,8 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         worksheet.set_column(col, col, width)
 
     current_row = start_row + 1
-    total_product_value = 0
+    total_exw_value = 0 # 纯工厂货值合计
     
-    # 设定目标单元格大小 (像素)
     TARGET_HEIGHT = 100
     TARGET_WIDTH = 100
 
@@ -265,9 +284,9 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         qty = float(item.get('qty', 0))
         factory_price_unit = float(item.get('price_exw', 0))
         
-        final_unit_price = factory_price_unit * (1 + service_fee_percent / 100.0)
-        line_total = final_unit_price * qty
-        total_product_value += line_total
+        # 逻辑变更：单价 = 纯工厂价，不再包含服务费
+        line_total_exw = factory_price_unit * qty
+        total_exw_value += line_total_exw
 
         # 设置行高
         worksheet.set_row(current_row, 80)
@@ -275,12 +294,10 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         worksheet.write(current_row, 0, idx, fmt_cell_center)
         worksheet.write(current_row, 1, item.get('model', ''), fmt_cell_center)
         
+        # 图片处理 (保持不变)
         if item.get('image_data'):
             try:
-                # 关键修复：创建全新的 BytesIO 对象
                 img_byte_stream = io.BytesIO(item['image_data'])
-                
-                # 计算缩放比例
                 pil_img = Image.open(img_byte_stream)
                 img_width, img_height = pil_img.size
                 
@@ -291,11 +308,9 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
                 else:
                     scale = 0.5
 
-                # 重置指针，确保 xlsxwriter 能读取
                 img_byte_stream.seek(0)
-                
                 worksheet.insert_image(current_row, 2, "img.png", {
-                    'image_data': img_byte_stream,  # 传递 BytesIO 对象，而非 bytes
+                    'image_data': img_byte_stream, 
                     'x_scale': scale, 
                     'y_scale': scale, 
                     'object_position': 2 
@@ -308,85 +323,61 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         worksheet.write(current_row, 3, item.get('name', ''), fmt_cell_left)
         worksheet.write(current_row, 4, item.get('desc', ''), fmt_cell_left)
         worksheet.write(current_row, 5, qty, fmt_cell_center)
-        worksheet.write(current_row, 6, final_unit_price, fmt_money)
-        worksheet.write(current_row, 7, line_total, fmt_money)
+        worksheet.write(current_row, 6, factory_price_unit, fmt_money) # 写入工厂单价
+        worksheet.write(current_row, 7, line_total_exw, fmt_money)    # 写入工厂总价
         
         current_row += 1
 
-    # 4. 底部合计
+    # 4. 底部合计 - 逻辑重构
+    
+    # 行1: 纯工厂货值小计
+    worksheet.merge_range(current_row, 0, current_row, 6, "Subtotal (EXW) / 工厂货值小计", fmt_total_row)
+    worksheet.write(current_row, 7, total_exw_value, fmt_total_money)
+    current_row += 1
+
+    # 行2: 国内运费 (独立行)
     if total_domestic_freight > 0:
-        worksheet.merge_range(current_row, 0, current_row, 6, "Domestic Freight (China) / 中国国内运费", fmt_total_row)
+        worksheet.merge_range(current_row, 0, current_row, 6, "Domestic Freight / 国内运费", fmt_total_row)
         worksheet.write(current_row, 7, total_domestic_freight, fmt_total_money)
         current_row += 1
     
-    grand_total = total_product_value + total_domestic_freight
+    # 行3: 服务费 (独立行)
+    # 服务费计算基数通常是工厂货值
+    service_fee_amount = total_exw_value * (service_fee_percent / 100.0)
+    if service_fee_amount > 0:
+        worksheet.merge_range(current_row, 0, current_row, 6, f"Service Fee / 服务费 ({service_fee_percent}%)", fmt_total_row)
+        worksheet.write(current_row, 7, service_fee_amount, fmt_total_money)
+        current_row += 1
+
+    # 行4: 总计
+    grand_total = total_exw_value + total_domestic_freight + service_fee_amount
     
-    worksheet.merge_range(current_row, 0, current_row, 6, "GRAND TOTAL / 合计总额", fmt_total_row)
+    worksheet.merge_range(current_row, 0, current_row, 6, "GRAND TOTAL / 总计", fmt_total_row)
     worksheet.write(current_row, 7, grand_total, fmt_total_money)
 
     workbook.close()
     output.seek(0)
     return output
 
-# --- 🔥 智能图片裁剪 (Exact/Strict Crop) ---
-def crop_image_exact(original_image_bytes, bbox_1000):
-    """
-    精准裁剪算法
-    """
-    try:
-        if not bbox_1000 or len(bbox_1000) != 4: return original_image_bytes
-        
-        img = Image.open(io.BytesIO(original_image_bytes))
-        width, height = img.size
-        
-        ymin_rel, xmin_rel, ymax_rel, xmax_rel = bbox_1000
-        
-        y1 = int(ymin_rel / 1000 * height)
-        x1 = int(xmin_rel / 1000 * width)
-        y2 = int(ymax_rel / 1000 * height)
-        x2 = int(xmax_rel / 1000 * width)
-        
-        x1 = max(0, x1); y1 = max(0, y1)
-        x2 = min(width, x2); y2 = min(height, y2)
-        
-        if (x2 - x1) < 5 or (y2 - y1) < 5:
-            return original_image_bytes
-
-        cropped_img = img.crop((x1, y1, x2, y2))
-        
-        output = io.BytesIO()
-        cropped_img.save(output, format=img.format if img.format else 'PNG')
-        return output.getvalue()
-        
-    except Exception as e:
-        print(f"Crop Error: {e}")
-        return original_image_bytes
-
 # --- AI Parsing Logic ---
-# 🔥 核心升级：强调 tightest bounding box
+# 回退到基础版本，不再尝试复杂的裁剪，确保稳定性
 def parse_image_with_ai(image_file, client):
     if not image_file: return None
     
     base64_image = base64.b64encode(image_file.getvalue()).decode('utf-8')
     
+    # Prompt 简化，专注于提取文字信息，不再要求坐标
     prompt = """
-    Role: You are an advanced OCR & Data Extraction engine specialized in Chinese E-commerce Order Forms (1688/Taobao).
-    
-    CONTEXT: The screenshot contains a list of product variants.
-    
-    YOUR MISSION:
-    1. **SCAN VERTICALLY**: Extract EVERY single variant row (e.g. 500ml, 1000ml) as a separate item.
-    2. **BOUNDING BOX (STRICT)**: Return the **EXACT** bounding box for the product thumbnail image.
-       - **DO NOT** include any whitespace/background outside the image.
-       - **DO NOT** try to make it square. If the cup is tall and thin, the box should be tall and thin.
-       - Return `bbox_1000`: `[ymin, xmin, ymax, xmax]` (0-1000 scale).
+    Role: You are an expert Procurement Data Entry Specialist for 1688.com and Taobao.
+    Task: Analyze the screenshot and extract ALL products listed.
     
     DATA EXTRACTION RULES:
-    - **Name**: Main product name (Translate to Russian).
-    - **Model/Spec**: The variant text (e.g., "500ml White").
-    - **Desc**: ULTRA SHORT summary (max 5 words). E.g., "Cup 500ml". Translate to Russian.
-    - **Price**: Extract the price for this row.
-    - **Qty**: Extract quantity for this row.
+    1. **Multiple Items**: The image may contain multiple rows. Extract EACH one.
+    2. **Name**: Translate to Russian.
+    3. **Model/Spec**: Extract color/size (e.g., "Black XL", "500ml").
+    4. **Price (EXW)**: Look for the orange/red price.
+    5. **Qty**: Look for "x10" or number in input box. Default to 1.
+    6. **Desc**: Short summary (max 5 words).
     
     Output Format (JSON):
     {
@@ -396,8 +387,7 @@ def parse_image_with_ai(image_file, client):
               "model": "500ml", 
               "desc_ru": "...", 
               "price_cny": 5.5, 
-              "qty": 100,
-              "bbox_1000": [100, 10, 200, 60] 
+              "qty": 100 
             },
             ...
         ]
@@ -422,7 +412,6 @@ def parse_image_with_ai(image_file, client):
         )
         return json.loads(res.choices[0].message.content)
     except Exception as e:
-        print(f"Vision Error: {e}")
         return None
 
 def parse_product_info_with_ai(text_content, client):
@@ -890,7 +879,7 @@ if selected_nav == "Quotation":
                     st.success("已添加")
                     st.rerun()
 
-        # --- 模式2：AI 智能识别 (升级版) ---
+        # --- 模式2：AI 智能识别 (基础版) ---
         with tab_ai:
             st.info("💡 提示：支持两种方式\n1. 复制 1688 链接/聊天文字\n2. 直接上传产品图片 (AI 会自动看图填表，支持多商品)")
             
@@ -907,7 +896,7 @@ if selected_nav == "Quotation":
                     
                     # 优先处理图片
                     if ai_input_image:
-                        status.write("👁️ 正在进行多目标视觉分析 & 智能裁剪 (Fit-to-Cell)...")
+                        status.write("👁️ 正在进行多目标视觉分析...")
                         
                         original_bytes = ai_input_image.getvalue()
                         ai_res = parse_image_with_ai(ai_input_image, client)
@@ -915,19 +904,13 @@ if selected_nav == "Quotation":
                         # 处理返回的列表 (支持多商品)
                         if ai_res and "items" in ai_res:
                             for raw_item in ai_res["items"]:
-                                
-                                # 核心：智能裁剪 (Exact/Strict Crop)
-                                cropped_bytes = original_bytes
-                                if "bbox_1000" in raw_item:
-                                    cropped_bytes = crop_image_exact(original_bytes, raw_item["bbox_1000"])
-                                
                                 new_items.append({
                                     "model": raw_item.get('model', ''), 
                                     "name": raw_item.get('name_ru', 'Товар'), 
                                     "desc": raw_item.get('desc_ru', ''), 
                                     "price_exw": float(raw_item.get('price_cny', 0)), 
                                     "qty": int(raw_item.get('qty', 1)), 
-                                    "image_data": cropped_bytes 
+                                    "image_data": original_bytes # 使用原图
                                 })
                         
                     # 其次处理文字
@@ -980,9 +963,11 @@ if selected_nav == "Quotation":
             total_freight = st.number_input("🚛 国内总运费 (Total Freight ¥)", min_value=0.0, step=10.0, help="这笔费用将单独列示在报价单底部，不会分摊到单价中")
             service_fee = st.slider("💰 服务费率 (Profit %)", 0, 50, 5)
             
-            with st.expander("🏢 公司表头信息"):
+            with st.expander("🏢 公司表头信息 (含 Logo & WeChat)", expanded=True):
                 co_name = st.text_input("公司名称", value="义乌市万昶进出口有限公司")
+                co_logo = st.file_uploader("公司 Logo (可选)", type=['png', 'jpg', 'jpeg'], key="co_logo")
                 co_tel = st.text_input("电话", value="+86-15157938188")
+                co_wechat = st.text_input("WeChat ID", value="15157938188") # 新增 WeChat
                 co_email = st.text_input("邮箱", value="CTF1111@163.com")
                 co_addr = st.text_input("地址", value="义乌市工人北路1121号5楼")
             
@@ -990,16 +975,20 @@ if selected_nav == "Quotation":
             
             if items:
                 # 预览最终价格
-                product_total = sum(i['price_exw'] * i['qty'] * (1 + service_fee/100) for i in items)
-                final_val = product_total + total_freight
+                product_total_exw = sum(i['price_exw'] * i['qty'] for i in items)
+                service_fee_val = product_total_exw * (service_fee/100)
+                final_val = product_total_exw + total_freight + service_fee_val
                 
                 st.markdown(f"""
                 <div style="padding:15px; border:1px solid #444; border-radius:10px; background:rgba(255,255,255,0.05)">
                     <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e">
-                        <span>商品总额 (含服务费):</span> <span>¥ {product_total:,.2f}</span>
+                        <span>工厂货值 (EXW Total):</span> <span>¥ {product_total_exw:,.2f}</span>
                     </div>
                     <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e; margin-top:5px;">
                         <span>+ 国内运费:</span> <span>¥ {total_freight:,.2f}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e; margin-top:5px;">
+                        <span>+ 服务费 ({service_fee}%):</span> <span>¥ {service_fee_val:,.2f}</span>
                     </div>
                     <div style="height:1px; background:#555; margin:10px 0;"></div>
                     <div style="display:flex; justify-content:space-between; font-size:18px; font-weight:600; color:#fff">
@@ -1008,7 +997,16 @@ if selected_nav == "Quotation":
                 </div>
                 """, unsafe_allow_html=True)
 
-                excel_data = generate_quotation_excel(items, service_fee, total_freight, {"name":co_name, "tel":co_tel, "email":co_email, "addr":co_addr})
+                logo_bytes = co_logo.getvalue() if co_logo else None
+                
+                excel_data = generate_quotation_excel(
+                    items, service_fee, total_freight, 
+                    {
+                        "name":co_name, "tel":co_tel, "wechat":co_wechat, 
+                        "email":co_email, "addr":co_addr, "logo_bytes": logo_bytes
+                    }
+                )
+                
                 st.download_button(
                     label="📥 导出 Excel 报价单",
                     data=excel_data,
