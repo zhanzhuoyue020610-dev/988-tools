@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 import concurrent.futures
 import streamlit.components.v1 as components
 from bs4 import BeautifulSoup
-from PIL import Image # 引入图片处理库
+from PIL import Image
 
 # ==========================================
 # 📦 依赖库检查
@@ -46,7 +46,7 @@ CONFIG = {
     "LOW_STOCK_THRESHOLD": 300,
     "POINTS_PER_TASK": 10,
     "POINTS_WECHAT_TASK": 5,
-    # 必须使用 gpt-4o，因为只有它具备较好的 spatial coordinates (空间坐标) 能力
+    # 视觉识别必须使用 gpt-4o
     "AI_MODEL": "gpt-4o" 
 }
 
@@ -298,72 +298,88 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     output.seek(0)
     return output
 
-# --- 图片裁剪辅助函数 ---
-def crop_image_by_bbox(original_image_bytes, bbox_1000):
+# --- 🔥 智能图片裁剪 (Smart Square Expand) ---
+def crop_image_smartly(original_image_bytes, bbox_1000):
     """
-    根据 AI 返回的 0-1000 坐标系裁剪图片
-    bbox_1000: [ymin, xmin, ymax, xmax]
+    智能裁剪算法：
+    1. 根据 AI 返回的 0-1000 坐标系，计算中心点。
+    2. 强制以中心点为基准，向外扩散成一个完整的正方形（解决只切一角的问题）。
+    3. 增加 padding (膨胀系数)，确保物体完整。
     """
     try:
         if not bbox_1000 or len(bbox_1000) != 4: return original_image_bytes
         
-        # 转换为 PIL Image
         img = Image.open(io.BytesIO(original_image_bytes))
         width, height = img.size
         
-        # 解析相对坐标
-        ymin, xmin, ymax, xmax = bbox_1000
+        # 1. 提取 AI 原始坐标 (Relative)
+        ymin_rel, xmin_rel, ymax_rel, xmax_rel = bbox_1000
         
-        # 转换为绝对像素坐标
-        left = int(xmin / 1000 * width)
-        top = int(ymin / 1000 * height)
-        right = int(xmax / 1000 * width)
-        bottom = int(ymax / 1000 * height)
+        # 2. 转换为绝对坐标 (Absolute)
+        y1 = int(ymin_rel / 1000 * height)
+        x1 = int(xmin_rel / 1000 * width)
+        y2 = int(ymax_rel / 1000 * height)
+        x2 = int(xmax_rel / 1000 * width)
         
-        # 边界检查
-        left = max(0, left); top = max(0, top)
-        right = min(width, right); bottom = min(height, bottom)
+        # 3. 计算中心点 (Center) 和 原始宽高
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        w_box = x2 - x1
+        h_box = y2 - y1
         
-        # 如果裁剪区域太小（可能是 AI 幻觉），返回原图或不做裁剪
-        if (right - left) < 10 or (bottom - top) < 10:
+        # 4. 智能膨胀 (Smart Expand Logic)
+        # 取长边作为基准，并额外放大 30% (scale=1.3) 以防止切边
+        max_side = max(w_box, h_box)
+        target_size = int(max_side * 1.3) 
+        
+        # 5. 计算新的裁剪框 (Centered Square)
+        half_size = target_size // 2
+        new_x1 = max(0, cx - half_size)
+        new_y1 = max(0, cy - half_size)
+        new_x2 = min(width, cx + half_size)
+        new_y2 = min(height, cy + half_size)
+        
+        # 6. 裁剪
+        # 如果计算出的区域太小（AI 幻觉），则返回原图
+        if (new_x2 - new_x1) < 20 or (new_y2 - new_y1) < 20:
             return original_image_bytes
 
-        # 执行裁剪
-        cropped_img = img.crop((left, top, right, bottom))
+        cropped_img = img.crop((new_x1, new_y1, new_x2, new_y2))
         
-        # 转回 BytesIO
         output = io.BytesIO()
         cropped_img.save(output, format=img.format if img.format else 'PNG')
         return output.getvalue()
+        
     except Exception as e:
-        print(f"Crop Failed: {e}")
+        print(f"Smart Crop Failed: {e}")
         return original_image_bytes
 
 # --- AI Parsing Logic ---
-# 🔥 终极升级：表格扫描 + 坐标定位 (Table Scanning + Bounding Box)
+# 🔥 终极升级：多行扫描 + 强制全图定位
 def parse_image_with_ai(image_file, client):
     if not image_file: return None
     
     base64_image = base64.b64encode(image_file.getvalue()).decode('utf-8')
     
-    # 核心指令：要求 AI 不仅提取文字，还要返回缩略图的坐标
+    # 核心 Prompt 修改：强调 "ENTIRE SQUARE IMAGE"
     prompt = """
     Role: You are an advanced OCR & Data Extraction engine specialized in Chinese E-commerce Order Forms (1688/Taobao).
     
-    CONTEXT: The user has uploaded a screenshot of a product list (Order Manifest).
+    CONTEXT: The user provided a screenshot of a product list with multiple variants (rows).
     
     YOUR MISSION:
-    1. **SCAN FOR TEXT ROWS**: Extract EACH variant row (e.g., "500ml" row, "1000ml" row) as a separate item.
-    2. **EXTRACT THUMBNAIL COORDINATES**: For EACH row, identify the location of the small product thumbnail image on the left.
-       - Return coordinates as `bbox_1000`: `[ymin, xmin, ymax, xmax]` on a 0-1000 normalized scale.
-       - This is critical for cropping the correct image.
+    1. **SCAN VERTICALLY**: Extract EVERY single variant row as a separate item.
+    2. **BOUNDING BOX (CRITICAL)**: For each row, identify the product thumbnail on the left.
+       - **DO NOT** select just the inner object (e.g. just the cup lid).
+       - **SELECT THE ENTIRE SQUARE CONTAINER** of the image.
+       - Return `bbox_1000`: `[ymin, xmin, ymax, xmax]` (0-1000 scale).
     
     DATA EXTRACTION RULES:
     - **Name**: Main product name (Translate to Russian).
-    - **Model/Spec**: The specific variant text (e.g., "500ml White").
+    - **Model/Spec**: The variant text (e.g., "500ml White", "1000ml Black").
     - **Desc**: ULTRA SHORT summary (max 5 words). E.g., "Plastic Cup 500ml". Translate to Russian.
-    - **Price**: Extract the price for *this specific row*.
-    - **Qty**: Extract quantity for *this specific row*.
+    - **Price**: Extract the price for this row.
+    - **Qty**: Extract quantity for this row.
     
     Output Format (JSON):
     {
@@ -374,7 +390,7 @@ def parse_image_with_ai(image_file, client):
               "desc_ru": "...", 
               "price_cny": 5.5, 
               "qty": 100,
-              "bbox_1000": [150, 10, 250, 150]  // [ymin, xmin, ymax, xmax]
+              "bbox_1000": [100, 10, 200, 110] 
             },
             ...
         ]
@@ -884,7 +900,7 @@ if selected_nav == "Quotation":
                     
                     # 优先处理图片
                     if ai_input_image:
-                        status.write("👁️ 正在进行多目标视觉分析 & 自动裁剪...")
+                        status.write("👁️ 正在进行多目标视觉分析 & 智能裁剪 (Smart Crop)...")
                         
                         original_bytes = ai_input_image.getvalue()
                         ai_res = parse_image_with_ai(ai_input_image, client)
@@ -893,10 +909,10 @@ if selected_nav == "Quotation":
                         if ai_res and "items" in ai_res:
                             for raw_item in ai_res["items"]:
                                 
-                                # 核心：根据 AI 返回的 bbox 裁剪图片
-                                cropped_bytes = original_bytes # 默认使用原图
+                                # 核心：智能裁剪 (Smart Square Expand)
+                                cropped_bytes = original_bytes
                                 if "bbox_1000" in raw_item:
-                                    cropped_bytes = crop_image_by_bbox(original_bytes, raw_item["bbox_1000"])
+                                    cropped_bytes = crop_image_smartly(original_bytes, raw_item["bbox_1000"])
                                 
                                 new_items.append({
                                     "model": raw_item.get('model', ''), 
@@ -904,7 +920,7 @@ if selected_nav == "Quotation":
                                     "desc": raw_item.get('desc_ru', ''), 
                                     "price_exw": float(raw_item.get('price_cny', 0)), 
                                     "qty": int(raw_item.get('qty', 1)), 
-                                    "image_data": cropped_bytes # 使用裁剪后的图
+                                    "image_data": cropped_bytes 
                                 })
                         
                     # 其次处理文字
@@ -923,7 +939,7 @@ if selected_nav == "Quotation":
                     
                     if new_items:
                         st.session_state["quote_items"].extend(new_items)
-                        status.update(label=f"成功识别 {len(new_items)} 个商品 (已自动裁剪)", state="complete")
+                        status.update(label=f"成功识别 {len(new_items)} 个商品 (已智能裁剪)", state="complete")
                         time.sleep(1)
                         st.rerun()
                     else:
