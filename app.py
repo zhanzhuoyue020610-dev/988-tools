@@ -11,6 +11,7 @@ import os
 import hashlib
 import random
 import json
+import base64  # 新增：用于处理图片编码
 from datetime import date, datetime, timedelta
 import concurrent.futures
 import streamlit.components.v1 as components
@@ -44,10 +45,10 @@ CONFIG = {
     "LOW_STOCK_THRESHOLD": 300,
     "POINTS_PER_TASK": 10,
     "POINTS_WECHAT_TASK": 5,
-    "AI_MODEL": "gpt-4o-mini"
+    "AI_MODEL": "gpt-4o-mini" # 支持视觉识别的高性价比模型
 }
 
-# 注入时钟 HTML
+# 注入时钟 HTML (保持原样)
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -59,7 +60,7 @@ st.markdown("""
 ">Initialize...</div>
 """, unsafe_allow_html=True)
 
-# 注入 JS
+# 注入 JS (保持原样)
 components.html("""
     <script>
         function updateClock() {
@@ -76,7 +77,7 @@ components.html("""
     </script>
 """, height=0)
 
-# 注入 CSS
+# 注入 CSS (保持原样)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -129,7 +130,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# ☁️ 数据库与核心逻辑
+# ☁️ 数据库与核心逻辑 (保持原样)
 # ==========================================
 @st.cache_resource
 def init_supabase():
@@ -210,8 +211,8 @@ def update_user_limit(username, new_limit):
         return True
     except: return False
 
-# --- 🚀 报价单生成引擎 (XlsxWriter) ---
-# 🔥 重大更新：支持全局国内运费，分摊到单价，删减多余列
+# --- 🚀 报价单生成引擎 (XlsxWriter) - 重构版 ---
+# 🔥 更新：运费独立成行，不再分摊到单价
 def generate_quotation_excel(items, service_fee_percent, total_domestic_freight, company_info):
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
@@ -225,13 +226,15 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     fmt_cell_left = workbook.add_format({'font_size': 10, 'align': 'left', 'valign': 'vcenter', 'border': 1, 'text_wrap': True})
     fmt_money = workbook.add_format({'font_size': 10, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'num_format': '¥#,##0.00'})
     fmt_bold_red = workbook.add_format({'bold': True, 'color': 'red', 'font_size': 11})
+    fmt_total_row = workbook.add_format({'bold': True, 'font_size': 11, 'align': 'right', 'valign': 'vcenter', 'border': 1, 'bg_color': '#e6e6e6'})
+    fmt_total_money = workbook.add_format({'bold': True, 'font_size': 11, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'num_format': '¥#,##0.00', 'bg_color': '#e6e6e6'})
 
     # 1. 写入表头信息
-    worksheet.merge_range('A1:I2', company_info.get('name', "义乌市万昶进出口有限公司"), fmt_header_main)
+    worksheet.merge_range('A1:H2', company_info.get('name', "义乌市万昶进出口有限公司"), fmt_header_main)
     contact_text = f"TEL: {company_info.get('tel', '')}    E-mail: {company_info.get('email', '')}"
-    worksheet.merge_range('A3:I3', contact_text, fmt_header_sub)
-    worksheet.merge_range('A4:I4', f"Address: {company_info.get('addr', '')}", fmt_header_sub)
-    worksheet.merge_range('A6:I6', "* This price is valid for 10 days / Эта цена действительна в течение 10 дней", fmt_bold_red)
+    worksheet.merge_range('A3:H3', contact_text, fmt_header_sub)
+    worksheet.merge_range('A4:H4', f"Address: {company_info.get('addr', '')}", fmt_header_sub)
+    worksheet.merge_range('A6:H6', "* This price is valid for 10 days / Эта цена действительна в течение 10 дней", fmt_bold_red)
 
     # 2. 写入表格列名 (精简版)
     headers = [
@@ -250,30 +253,18 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         worksheet.write(start_row, col, h_text, fmt_table_header)
         worksheet.set_column(col, col, width)
 
-    # 3. 计算分摊运费逻辑
-    # 我们需要先计算所有商品的总工厂货值，以便按比例分摊“国内总运费”
-    total_factory_value = sum(float(i.get('price_exw', 0)) * float(i.get('qty', 0)) for i in items)
-    if total_factory_value == 0: total_factory_value = 1 # 防止除以0
-
     current_row = start_row + 1
-    total_amount = 0
+    total_product_value = 0
 
     for idx, item in enumerate(items, 1):
         qty = float(item.get('qty', 0))
         factory_price_unit = float(item.get('price_exw', 0))
-        item_factory_total = factory_price_unit * qty
         
-        # 分摊运费逻辑：
-        # 该商品的运费份额 = 总国内运费 * (该商品工厂总值 / 所有商品工厂总值)
-        # 单个商品分摊运费 = 该商品运费份额 / 数量
-        allocated_freight_total = total_domestic_freight * (item_factory_total / total_factory_value)
-        allocated_freight_unit = allocated_freight_total / qty if qty > 0 else 0
-        
-        # 最终单价 = (工厂单价 + 单个分摊运费) * (1 + 利润率)
-        final_unit_price = (factory_price_unit + allocated_freight_unit) * (1 + service_fee_percent / 100.0)
+        # 逻辑变更：直接在出厂价上加服务费，不含运费
+        final_unit_price = factory_price_unit * (1 + service_fee_percent / 100.0)
         
         line_total = final_unit_price * qty
-        total_amount += line_total
+        total_product_value += line_total
 
         worksheet.set_row(current_row, 80)
         worksheet.write(current_row, 0, idx, fmt_cell_center)
@@ -293,16 +284,67 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         
         current_row += 1
 
-    # 4. 底部合计
-    worksheet.write(current_row, 4, "TOTAL / 合计", fmt_table_header)
-    worksheet.write(current_row, 7, total_amount, fmt_money)
+    # 4. 底部合计 - 逻辑更新：添加单独的运费行
+    
+    # 运费行
+    if total_domestic_freight > 0:
+        worksheet.merge_range(current_row, 0, current_row, 6, "Domestic Freight (China) / 中国国内运费", fmt_total_row)
+        worksheet.write(current_row, 7, total_domestic_freight, fmt_total_money)
+        current_row += 1
+    
+    # 最终总计
+    grand_total = total_product_value + total_domestic_freight
+    
+    worksheet.merge_range(current_row, 0, current_row, 6, "GRAND TOTAL / 合计总额", fmt_total_row)
+    worksheet.write(current_row, 7, grand_total, fmt_total_money)
 
     workbook.close()
     output.seek(0)
     return output
 
 # --- AI Parsing Logic ---
-# 🔥 新增：AI 解析文本/链接，提取数据并翻译
+# 🔥 更新：支持图片识别 (GPT-4o Vision)
+def parse_image_with_ai(image_file, client):
+    if not image_file: return None
+    
+    # 编码图片为 base64
+    base64_image = base64.b64encode(image_file.getvalue()).decode('utf-8')
+    
+    prompt = """
+    You are a professional B2B trade assistant. Analyze this product image.
+    Extract the following details to fill a quotation sheet for a Russian client:
+    1. Product Name (Translate to Russian).
+    2. Approximate Model/Type (if visible).
+    3. Short Description (Color, material, key features - in Russian).
+    4. Suggest a Quantity (default 1).
+    
+    Return ONLY a JSON object:
+    {
+        "name_ru": "...",
+        "model": "...",
+        "desc_ru": "...",
+        "qty": 1
+    }
+    """
+    
+    try:
+        res = client.chat.completions.create(
+            model=CONFIG["AI_MODEL"], # 确保使用支持 Vision 的模型 (gpt-4o 或 gpt-4o-mini)
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }
+            ],
+            response_format={"type": "json_object"}
+        )
+        return json.loads(res.choices[0].message.content)
+    except Exception as e:
+        return None
+
 def parse_product_info_with_ai(text_content, client):
     if not text_content: return None
     
@@ -339,7 +381,7 @@ def parse_product_info_with_ai(text_content, client):
     except Exception as e:
         return None
 
-# --- AI Logic (Generic) ---
+# --- AI Logic (Generic) (保持原样) ---
 def get_daily_motivation(client):
     if "motivation_quote" not in st.session_state:
         local_quotes = ["心有繁星，沐光而行。", "坚持是另一种形式的天赋。", "沉稳是职场最高级的修养。", "每一步都算数。", "保持专注，未来可期。"]
@@ -415,7 +457,7 @@ def transcribe_audio(client, audio_file):
     except Exception as e:
         return f"Error: {str(e)}", "Translation Failed"
 
-# --- WeChat Logic ---
+# --- WeChat Logic (保持原样) ---
 def get_wechat_tasks(username):
     if not supabase: return []
     today = date.today().isoformat()
@@ -449,7 +491,7 @@ def admin_import_wechat_customers(df_raw):
         return True
     except: return False
 
-# --- WA Logic ---
+# --- WA Logic (保持原样) ---
 def get_user_daily_performance(username):
     if not supabase: return pd.DataFrame()
     try:
@@ -671,7 +713,7 @@ def check_api_health(cn_user, cn_key, openai_key):
     return status
 
 # ==========================================
-# 🔐 登录页
+# 🔐 登录页 (保持原样)
 # ==========================================
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 
@@ -743,7 +785,7 @@ selected_nav = st.radio("导航菜单", menu_options, format_func=lambda x: menu
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ------------------------------------------
-# 💰 Quotation (报价生成器) - 核心新增部分
+# 💰 Quotation (报价生成器) - 核心修改部分
 # ------------------------------------------
 if selected_nav == "Quotation":
     if not XLSXWRITER_INSTALLED:
@@ -752,7 +794,7 @@ if selected_nav == "Quotation":
         if "quote_items" not in st.session_state: st.session_state["quote_items"] = []
 
         # 双模式 TAB
-        tab_manual, tab_ai = st.tabs(["✍️ 人工录入", "🤖 AI 智能识别 (支持1688链接/对话)"])
+        tab_manual, tab_ai = st.tabs(["✍️ 人工录入", "🤖 AI 智能识别 (支持图片/链接)"])
 
         # --- 模式1：人工录入 ---
         with tab_manual:
@@ -777,34 +819,55 @@ if selected_nav == "Quotation":
                     st.success("已添加")
                     st.rerun()
 
-        # --- 模式2：AI 智能识别 ---
+        # --- 模式2：AI 智能识别 (升级版) ---
         with tab_ai:
-            st.info("💡 提示：直接复制 1688 链接，或者粘贴你和供应商的聊天记录（包含价格、数量、品名）。AI 会自动翻译并提取信息。")
-            ai_input_text = st.text_area("请粘贴文本内容：", height=100, placeholder="例如：https://detail.1688.com/xxx... 或者是：这款黑色的包，价格25元，我要100个")
+            st.info("💡 提示：支持两种方式\n1. 复制 1688 链接/聊天文字\n2. 直接上传产品图片 (AI 会自动看图填表)")
+            
+            c_text_ai, c_img_ai = st.columns([2, 1])
+            with c_text_ai:
+                ai_input_text = st.text_area("📄 方式一：粘贴文字/链接", height=120, placeholder="例如：这款黑色的包，价格25元，我要100个")
+            with c_img_ai:
+                ai_input_image = st.file_uploader("🖼️ 方式二：上传产品图", type=['jpg', 'png', 'jpeg'])
             
             # AI 处理逻辑
-            if st.button("✨ AI 识别并添加"):
-                with st.status("正在分析...", expanded=True) as status:
-                    status.write("🧠 正在理解语义...")
-                    ai_res = parse_product_info_with_ai(ai_input_text, client)
+            if st.button("✨ 开始 AI 识别"):
+                with st.status("正在唤醒 AI 引擎...", expanded=True) as status:
+                    item = None
+                    # 优先处理图片
+                    if ai_input_image:
+                        status.write("👁️ 正在进行视觉分析...")
+                        ai_res = parse_image_with_ai(ai_input_image, client)
+                        if ai_res:
+                            item = {
+                                "model": ai_res.get('model', ''), 
+                                "name": ai_res.get('name_ru', 'Товар'), 
+                                "desc": ai_res.get('desc_ru', ''), 
+                                "price_exw": 0.0, # 图片很难识别准确价格，通常设为0待填
+                                "qty": int(ai_res.get('qty', 1)), 
+                                "image_data": ai_input_image.getvalue() # 直接使用上传的图
+                            }
+                    # 其次处理文字
+                    elif ai_input_text:
+                        status.write("🧠 正在理解语义...")
+                        ai_res = parse_product_info_with_ai(ai_input_text, client)
+                        if ai_res:
+                            item = {
+                                "model": ai_res.get('model', ''), 
+                                "name": ai_res.get('name_ru', 'Товар'), 
+                                "desc": ai_res.get('desc_ru', ''), 
+                                "price_exw": float(ai_res.get('price_cny', 0)), 
+                                "qty": int(ai_res.get('qty', 1)), 
+                                "image_data": None
+                            }
                     
-                    if ai_res:
-                        status.write("✅ 识别成功！正在加入清单...")
-                        item = {
-                            "model": ai_res.get('model', ''), 
-                            "name": ai_res.get('name_ru', 'Товар'), 
-                            "desc": ai_res.get('desc_ru', ''), 
-                            "price_exw": float(ai_res.get('price_cny', 0)), 
-                            "qty": int(ai_res.get('qty', 1)), 
-                            "image_data": None # AI 模式暂时无法自动抓取图片（防爬虫限制）
-                        }
+                    if item:
                         st.session_state["quote_items"].append(item)
-                        status.update(label="添加成功", state="complete")
+                        status.update(label="识别成功，已加入清单", state="complete")
                         time.sleep(1)
                         st.rerun()
                     else:
                         status.update(label="识别失败", state="error")
-                        st.error("无法识别有效信息，请手动输入")
+                        st.error("无法提取有效信息，请重试")
 
         st.divider()
 
@@ -829,8 +892,8 @@ if selected_nav == "Quotation":
         with col_setting:
             st.markdown("#### ⚙️ 报价单全局设置")
             
-            # 运费逻辑变更：全局运费
-            total_freight = st.number_input("🚛 国内总运费 (Total Freight ¥)", min_value=0.0, step=10.0, help="这笔费用将按货值比例分摊到每个商品的单价中")
+            # 运费逻辑变更：独立行
+            total_freight = st.number_input("🚛 国内总运费 (Total Freight ¥)", min_value=0.0, step=10.0, help="这笔费用将单独列示在报价单底部，不会分摊到单价中")
             service_fee = st.slider("💰 服务费率 (Profit %)", 0, 50, 5)
             
             with st.expander("🏢 公司表头信息"):
@@ -843,9 +906,23 @@ if selected_nav == "Quotation":
             
             if items:
                 # 预览最终价格
-                total_val = sum(i['price_exw']*i['qty'] for i in items)
-                final_val = (total_val + total_freight) * (1 + service_fee/100)
-                st.metric("预计总报价 (Total)", f"¥ {final_val:,.2f}")
+                product_total = sum(i['price_exw'] * i['qty'] * (1 + service_fee/100) for i in items)
+                final_val = product_total + total_freight
+                
+                st.markdown(f"""
+                <div style="padding:15px; border:1px solid #444; border-radius:10px; background:rgba(255,255,255,0.05)">
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e">
+                        <span>商品总额 (含服务费):</span> <span>¥ {product_total:,.2f}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:#8e8e8e; margin-top:5px;">
+                        <span>+ 国内运费:</span> <span>¥ {total_freight:,.2f}</span>
+                    </div>
+                    <div style="height:1px; background:#555; margin:10px 0;"></div>
+                    <div style="display:flex; justify-content:space-between; font-size:18px; font-weight:600; color:#fff">
+                        <span>总计 (Grand Total):</span> <span>¥ {final_val:,.2f}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
                 excel_data = generate_quotation_excel(items, service_fee, total_freight, {"name":co_name, "tel":co_tel, "email":co_email, "addr":co_addr})
                 st.download_button(
