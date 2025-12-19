@@ -14,11 +14,20 @@ from datetime import date, datetime, timedelta
 import concurrent.futures
 import streamlit.components.v1 as components
 
+# ==========================================
+# 📦 依赖库检查
+# ==========================================
 try:
     from supabase import create_client, Client
     SUPABASE_INSTALLED = True
 except ImportError:
     SUPABASE_INSTALLED = False
+
+try:
+    import xlsxwriter
+    XLSXWRITER_INSTALLED = True
+except ImportError:
+    XLSXWRITER_INSTALLED = False
 
 warnings.filterwarnings("ignore")
 
@@ -29,7 +38,7 @@ st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
 CONFIG = {
     "CN_BASE_URL": "https://api.checknumber.ai/wa/api/simple/tasks",
-    "DAILY_QUOTA": 25, # 这是默认值，如果个人设置没生效，会用这个
+    "DAILY_QUOTA": 25,
     "LOW_STOCK_THRESHOLD": 300,
     "POINTS_PER_TASK": 10,
     "POINTS_WECHAT_TASK": 5,
@@ -151,7 +160,6 @@ def create_user(u, p, n, role="sales"):
     if not supabase: return False
     try:
         pwd = hash_password(p)
-        # 默认 daily_limit 设置为 CONFIG 默认值
         supabase.table('users').insert({"username": u, "password": pwd, "role": role, "real_name": n, "points": 0, "daily_limit": CONFIG["DAILY_QUOTA"]}).execute()
         return True
     except: return False
@@ -187,12 +195,11 @@ def get_user_points(username):
         return res.data.get('points', 0) or 0
     except: return 0
 
-# --- 🔥 新增：每日限额管理函数 ---
+# --- 用户限额管理 ---
 def get_user_limit(username):
     if not supabase: return CONFIG["DAILY_QUOTA"]
     try:
         res = supabase.table('users').select('daily_limit').eq('username', username).single().execute()
-        # 如果数据库还没设置，回退到全局默认值
         return res.data.get('daily_limit') or CONFIG["DAILY_QUOTA"]
     except: return CONFIG["DAILY_QUOTA"]
 
@@ -202,7 +209,118 @@ def update_user_limit(username, new_limit):
         supabase.table('users').update({'daily_limit': new_limit}).eq('username', username).execute()
         return True
     except: return False
-# ----------------------------------
+
+# --- 🚀 报价单生成引擎 (XlsxWriter) ---
+def generate_quotation_excel(items, service_fee_percent, company_info):
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+    worksheet = workbook.add_worksheet("Sheet1")
+
+    # 样式定义
+    fmt_header_main = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter'})
+    fmt_header_sub = workbook.add_format({'font_size': 11, 'align': 'left', 'valign': 'vcenter', 'text_wrap': True})
+    fmt_table_header = workbook.add_format({'bold': True, 'font_size': 10, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#f0f0f0', 'text_wrap': True})
+    fmt_cell_center = workbook.add_format({'font_size': 10, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'text_wrap': True})
+    fmt_cell_left = workbook.add_format({'font_size': 10, 'align': 'left', 'valign': 'vcenter', 'border': 1, 'text_wrap': True})
+    fmt_money = workbook.add_format({'font_size': 10, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'num_format': '¥#,##0.00'})
+    fmt_bold_red = workbook.add_format({'bold': True, 'color': 'red', 'font_size': 11})
+
+    # 1. 写入表头信息 (复刻模板)
+    worksheet.merge_range('A1:M2', company_info.get('name', "义乌市万昶进出口有限公司"), fmt_header_main)
+    
+    # 联系方式
+    contact_text = f"TEL: {company_info.get('tel', '')}    E-mail: {company_info.get('email', '')}"
+    worksheet.merge_range('A3:M3', contact_text, fmt_header_sub)
+    worksheet.merge_range('A4:M4', f"Address: {company_info.get('addr', '')}", fmt_header_sub)
+    
+    # 有效期提示
+    worksheet.merge_range('A6:M6', "* This price is valid for 10 days / Эта цена действительна в течение 10 дней", fmt_bold_red)
+
+    # 2. 写入表格列名 (中俄双语)
+    headers = [
+        ("序号\nNo.", 4), 
+        ("型号\nArticul", 15), 
+        ("图片\nPhoto", 15), 
+        ("名称\nName", 15), 
+        ("产品描述\nDescription", 25), 
+        ("箱数\nCartons", 8), 
+        ("数量\nQty", 8), 
+        ("单价 ￥\nPrice", 10), 
+        ("货值 ￥\nTotal Value", 12), 
+        ("方数/件\nCBM/Ctn", 10), 
+        ("重量/件\nKG/Ctn", 10), 
+        ("总立方\nTotal CBM", 10), 
+        ("总重量\nTotal KG", 10)
+    ]
+    
+    start_row = 8 # 从第9行开始
+    for col, (h_text, width) in enumerate(headers):
+        worksheet.write(start_row, col, h_text, fmt_table_header)
+        worksheet.set_column(col, col, width)
+
+    # 3. 写入数据行
+    current_row = start_row + 1
+    total_amount = 0
+    total_cbm = 0
+    total_kg = 0
+
+    for idx, item in enumerate(items, 1):
+        # 计算逻辑
+        qty = float(item.get('qty', 0))
+        ctns = float(item.get('ctns', 0))
+        factory_price = float(item.get('price_exw', 0))
+        freight = float(item.get('freight', 0))
+        
+        # 核心公式： (工厂价 + 国内运费) * (1 + 服务费%)
+        unit_price = (factory_price + freight) * (1 + service_fee_percent / 100.0)
+        line_total = unit_price * qty
+        
+        line_cbm = float(item.get('cbm_unit', 0)) * ctns
+        line_kg = float(item.get('kg_unit', 0)) * ctns
+        
+        # 累加
+        total_amount += line_total
+        total_cbm += line_cbm
+        total_kg += line_kg
+
+        # 写入单元格
+        worksheet.set_row(current_row, 80) # 设置行高以容纳图片
+        worksheet.write(current_row, 0, idx, fmt_cell_center)
+        worksheet.write(current_row, 1, item.get('model', ''), fmt_cell_center)
+        
+        # 插入图片
+        if item.get('image_data'):
+            img_data = io.BytesIO(item['image_data'])
+            worksheet.insert_image(current_row, 2, "img.png", {
+                'image_data': img_data, 
+                'x_scale': 0.5, 'y_scale': 0.5, 
+                'object_position': 1 # 居中
+            })
+        else:
+            worksheet.write(current_row, 2, "No Image", fmt_cell_center)
+
+        worksheet.write(current_row, 3, item.get('name', ''), fmt_cell_left)
+        worksheet.write(current_row, 4, item.get('desc', ''), fmt_cell_left)
+        worksheet.write(current_row, 5, ctns, fmt_cell_center)
+        worksheet.write(current_row, 6, qty, fmt_cell_center)
+        worksheet.write(current_row, 7, unit_price, fmt_money)
+        worksheet.write(current_row, 8, line_total, fmt_money)
+        worksheet.write(current_row, 9, item.get('cbm_unit', 0), fmt_cell_center)
+        worksheet.write(current_row, 10, item.get('kg_unit', 0), fmt_cell_center)
+        worksheet.write(current_row, 11, line_cbm, fmt_cell_center)
+        worksheet.write(current_row, 12, line_kg, fmt_cell_center)
+        
+        current_row += 1
+
+    # 4. 底部合计
+    worksheet.write(current_row, 4, "TOTAL / 合计", fmt_table_header)
+    worksheet.write(current_row, 8, total_amount, fmt_money)
+    worksheet.write(current_row, 11, total_cbm, fmt_cell_center)
+    worksheet.write(current_row, 12, total_kg, fmt_cell_center)
+
+    workbook.close()
+    output.seek(0)
+    return output
 
 # --- AI Logic ---
 def get_daily_motivation(client):
@@ -409,20 +527,17 @@ def admin_bulk_upload_to_pool(rows_to_insert):
         if success_count > 0: return success_count, f"批量失败，逐条成功 {success_count} 个"
         else: return 0, f"入库失败: {err_msg}"
 
-# 🔥 修改：领取任务时使用动态限额
 def claim_daily_tasks(username, client):
     today_str = date.today().isoformat()
-    # 1. 获取该用户今日已领取的数量
     existing = supabase.table('leads').select("*").eq('assigned_to', username).eq('assigned_at', today_str).execute().data
     current_count = len(existing)
     
-    # 2. 获取该用户的动态上限 (如果未设置则用默认 25)
+    # 获取动态限额
     user_max_limit = get_user_limit(username)
     
     if current_count >= user_max_limit: 
         return existing, "full"
     
-    # 3. 计算还需要多少
     needed = user_max_limit - current_count
     pool_leads = supabase.table('leads').select("id").is_('assigned_to', 'null').eq('is_frozen', False).limit(needed).execute().data
     
@@ -607,18 +722,121 @@ with c_user:
 st.divider()
 
 # 导航
+# 注意：我在导航里加入了 "Quotation"
 if st.session_state['role'] == 'admin':
-    menu_map = {"System": "系统监控", "Logs": "活动日志", "Team": "团队管理", "Import": "批量进货", "WeChat": "微信管理", "Tools": "实用工具"}
-    menu_options = ["System", "Logs", "Team", "Import", "WeChat", "Tools"]
+    menu_map = {"System": "系统监控", "Logs": "活动日志", "Team": "团队管理", "Import": "批量进货", "Quotation": "报价生成器", "WeChat": "微信管理", "Tools": "实用工具"}
+    menu_options = ["System", "Logs", "Team", "Import", "Quotation", "WeChat", "Tools"]
 else:
-    menu_map = {"Workbench": "销售工作台", "WeChat": "微信维护", "Tools": "实用工具"}
-    menu_options = ["Workbench", "WeChat", "Tools"]
+    menu_map = {"Workbench": "销售工作台", "Quotation": "报价生成器", "WeChat": "微信维护", "Tools": "实用工具"}
+    menu_options = ["Workbench", "Quotation", "WeChat", "Tools"]
 
 selected_nav = st.radio("导航菜单", menu_options, format_func=lambda x: menu_map.get(x, x), horizontal=True, label_visibility="collapsed")
 st.markdown("<br>", unsafe_allow_html=True)
 
+# ------------------------------------------
+# 💰 Quotation (报价生成器) - 核心新增部分
+# ------------------------------------------
+if selected_nav == "Quotation":
+    if not XLSXWRITER_INSTALLED:
+        st.error("未安装 XlsxWriter 库。请联系管理员运行 `pip install XlsxWriter`")
+    else:
+        # 初始化 Session State 存储商品列表
+        if "quote_items" not in st.session_state: st.session_state["quote_items"] = []
+
+        col_left, col_right = st.columns([1.5, 2.5])
+
+        # --- 左侧：添加商品表单 ---
+        with col_left:
+            st.markdown("#### 1. 添加商品")
+            with st.form("add_item_form", clear_on_submit=True):
+                # 图片上传
+                img_file = st.file_uploader("商品图片", type=['png', 'jpg', 'jpeg'])
+                
+                c_a1, c_a2 = st.columns(2)
+                model = c_a1.text_input("型号 (Articul)")
+                name = c_a2.text_input("名称 (Name)")
+                desc = st.text_area("产品描述 (Description)", height=80)
+                
+                c_b1, c_b2, c_b3 = st.columns(3)
+                price_exw = c_b1.number_input("工厂价 (¥)", min_value=0.0, step=0.1)
+                freight = c_b2.number_input("国内运费 (¥/个)", min_value=0.0, step=0.1)
+                qty = c_b3.number_input("数量 (Qty)", min_value=1, step=1)
+
+                c_c1, c_c2, c_c3 = st.columns(3)
+                ctns = c_c1.number_input("箱数 (Cartons)", min_value=1, step=1)
+                cbm = c_c2.number_input("方数/箱 (CBM)", min_value=0.0, step=0.01, format="%.3f")
+                kg = c_c3.number_input("重量/箱 (KG)", min_value=0.0, step=0.1)
+                
+                if st.form_submit_button("➕ 加入清单"):
+                    # 读取图片二进制数据存入内存
+                    img_data = img_file.getvalue() if img_file else None
+                    item = {
+                        "model": model, "name": name, "desc": desc,
+                        "price_exw": price_exw, "freight": freight, "qty": qty,
+                        "ctns": ctns, "cbm_unit": cbm, "kg_unit": kg,
+                        "image_data": img_data
+                    }
+                    st.session_state["quote_items"].append(item)
+                    st.success("已添加")
+                    time.sleep(0.5)
+                    st.rerun()
+
+        # --- 右侧：清单预览 & 导出设置 ---
+        with col_right:
+            st.markdown("#### 2. 全局设置 & 导出")
+            
+            with st.expander("🏢 公司表头设置", expanded=False):
+                co_name = st.text_input("公司名称", value="义乌市万昶进出口有限公司")
+                co_tel = st.text_input("电话", value="+86-15157938188")
+                co_email = st.text_input("邮箱", value="CTF1111@163.com")
+                co_addr = st.text_input("地址", value="义乌市工人北路1121号5楼")
+                co_info = {"name": co_name, "tel": co_tel, "email": co_email, "addr": co_addr}
+
+            # 利润率滑块
+            service_fee = st.slider("💰 服务费率 (Service Fee %)", min_value=0, max_value=50, value=5, step=1, help="最终单价 = (工厂价+运费) * (1+费率%)")
+            
+            # 清单预览
+            items = st.session_state["quote_items"]
+            if items:
+                # 构造预览 DataFrame (简单版)
+                preview_data = []
+                for idx, i in enumerate(items):
+                    final_p = (i['price_exw'] + i['freight']) * (1 + service_fee/100)
+                    preview_data.append({
+                        "型号": i['model'], 
+                        "名称": i['name'], 
+                        "工厂价": i['price_exw'],
+                        "运费": i['freight'],
+                        "预估报价(¥)": round(final_p, 2),
+                        "数量": i['qty']
+                    })
+                st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
+                
+                col_btn1, col_btn2 = st.columns(2)
+                if col_btn1.button("🗑️ 清空列表"):
+                    st.session_state["quote_items"] = []
+                    st.rerun()
+                
+                # 生成 Excel
+                excel_file = generate_quotation_excel(items, service_fee, co_info)
+                col_btn2.download_button(
+                    label="📥 下载 Excel 报价单",
+                    data=excel_file,
+                    file_name=f"Quotation_{date.today().isoformat()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.info("👈 请先在左侧添加商品")
+                # 放置一个占位图，提升UI美观度
+                st.markdown("""
+                <div style="border: 2px dashed #444; border-radius: 10px; padding: 40px; text-align: center; color: #666;">
+                    暂无商品数据<br>
+                    No Items Added
+                </div>
+                """, unsafe_allow_html=True)
+
 # --- 🖥️ SYSTEM MONITOR (Admin) ---
-if selected_nav == "System" and st.session_state['role'] == 'admin':
+elif selected_nav == "System" and st.session_state['role'] == 'admin':
     
     with st.expander("API Key 调试器", expanded=False):
         st.write("如报错请在 Secrets 更新 Key 并重启")
@@ -741,7 +959,6 @@ elif selected_nav == "Tools":
 elif selected_nav == "Workbench":
     my_leads = get_todays_leads(st.session_state['username'], client)
     
-    # 🔥 修改：读取动态 limit
     user_limit = get_user_limit(st.session_state['username'])
     total, curr = user_limit, len(my_leads)
     
