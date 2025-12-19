@@ -1,3 +1,14 @@
+明白，之前的代码为了防止切到边缘，故意加了 30% 的“膨胀系数”，导致截图留白太多，主体显得很小。
+
+这次调整的核心逻辑：
+
+1. **移除膨胀系数**：取消 `* 1.3` 的放大操作，**紧贴** AI 识别到的边缘进行裁剪。
+2. **智能补白**：如果商品是长条形的（比如 1000ml 的杯子），代码会保持长边长度不变，只在短边自动延伸，凑成一个正方形。这样既不会切掉头尾，也不会让图片变得巨大。
+3. **Prompt 微调**：告诉 AI “Give me the **TIGHTEST** bounding box”（给我最紧凑的边界框），不要包含多余背景。
+
+以下是调整后的**完整代码**：
+
+```python
 import streamlit as st
 import pandas as pd
 import re
@@ -298,13 +309,13 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     output.seek(0)
     return output
 
-# --- 🔥 智能图片裁剪 (Smart Square Expand) ---
-def crop_image_smartly(original_image_bytes, bbox_1000):
+# --- 🔥 智能图片裁剪 (紧凑版) ---
+def crop_image_tightly(original_image_bytes, bbox_1000):
     """
-    智能裁剪算法：
-    1. 根据 AI 返回的 0-1000 坐标系，计算中心点。
-    2. 强制以中心点为基准，向外扩散成一个完整的正方形（解决只切一角的问题）。
-    3. 增加 padding (膨胀系数)，确保物体完整。
+    紧凑裁剪算法 (Tight Crop)：
+    1. 移除不必要的放大系数。
+    2. 只在保持正方形比例的前提下，略微延伸短边，确保物体被完整包围。
+    3. 核心目标：紧贴物体。
     """
     try:
         if not bbox_1000 or len(bbox_1000) != 4: return original_image_bytes
@@ -312,71 +323,70 @@ def crop_image_smartly(original_image_bytes, bbox_1000):
         img = Image.open(io.BytesIO(original_image_bytes))
         width, height = img.size
         
-        # 1. 提取 AI 原始坐标 (Relative)
+        # 1. 提取 AI 原始坐标
         ymin_rel, xmin_rel, ymax_rel, xmax_rel = bbox_1000
         
-        # 2. 转换为绝对坐标 (Absolute)
+        # 2. 转换为绝对坐标
         y1 = int(ymin_rel / 1000 * height)
         x1 = int(xmin_rel / 1000 * width)
         y2 = int(ymax_rel / 1000 * height)
         x2 = int(xmax_rel / 1000 * width)
         
-        # 3. 计算中心点 (Center) 和 原始宽高
-        cx = (x1 + x2) // 2
-        cy = (y1 + y2) // 2
-        w_box = x2 - x1
-        h_box = y2 - y1
+        # 3. 计算物体的实际宽高
+        w_obj = x2 - x1
+        h_obj = y2 - y1
         
-        # 4. 智能膨胀 (Smart Expand Logic)
-        # 取长边作为基准，并额外放大 30% (scale=1.3) 以防止切边
-        max_side = max(w_box, h_box)
-        target_size = int(max_side * 1.3) 
+        # 4. 计算中心点
+        cx = x1 + w_obj // 2
+        cy = y1 + h_obj // 2
         
-        # 5. 计算新的裁剪框 (Centered Square)
-        half_size = target_size // 2
-        new_x1 = max(0, cx - half_size)
-        new_y1 = max(0, cy - half_size)
-        new_x2 = min(width, cx + half_size)
-        new_y2 = min(height, cy + half_size)
+        # 5. 确定裁剪框大小 (取最长边，微调 +5% padding 即可，不再 +30%)
+        side_len = int(max(w_obj, h_obj) * 1.05)
         
-        # 6. 裁剪
-        # 如果计算出的区域太小（AI 幻觉），则返回原图
-        if (new_x2 - new_x1) < 20 or (new_y2 - new_y1) < 20:
+        # 6. 计算新的裁剪坐标 (以中心点向外扩散)
+        half = side_len // 2
+        new_x1 = max(0, cx - half)
+        new_y1 = max(0, cy - half)
+        new_x2 = min(width, cx + half)
+        new_y2 = min(height, cy + half)
+        
+        # 7. 裁剪并返回
+        if (new_x2 - new_x1) < 10 or (new_y2 - new_y1) < 10:
             return original_image_bytes
 
         cropped_img = img.crop((new_x1, new_y1, new_x2, new_y2))
-        
         output = io.BytesIO()
         cropped_img.save(output, format=img.format if img.format else 'PNG')
         return output.getvalue()
         
     except Exception as e:
-        print(f"Smart Crop Failed: {e}")
+        print(f"Crop Error: {e}")
         return original_image_bytes
 
 # --- AI Parsing Logic ---
-# 🔥 终极升级：多行扫描 + 强制全图定位
+# 🔥 终极升级：精准坐标识别 (Tight Bounding Box)
 def parse_image_with_ai(image_file, client):
     if not image_file: return None
     
     base64_image = base64.b64encode(image_file.getvalue()).decode('utf-8')
     
-    # 核心 Prompt 修改：强调 "ENTIRE SQUARE IMAGE"
+    # 核心 Prompt 修改：强调 "TIGHTEST BOUNDING BOX"
     prompt = """
     Role: You are an advanced OCR & Data Extraction engine specialized in Chinese E-commerce Order Forms (1688/Taobao).
     
-    CONTEXT: The user provided a screenshot of a product list with multiple variants (rows).
+    CONTEXT: The screenshot contains a list of products.
     
     YOUR MISSION:
-    1. **SCAN VERTICALLY**: Extract EVERY single variant row as a separate item.
-    2. **BOUNDING BOX (CRITICAL)**: For each row, identify the product thumbnail on the left.
-       - **DO NOT** select just the inner object (e.g. just the cup lid).
-       - **SELECT THE ENTIRE SQUARE CONTAINER** of the image.
+    1. **SCAN VERTICALLY**: Extract EVERY single variant row (e.g. 500ml, 1000ml) as a separate item.
+    2. **BOUNDING BOX**: Return the **TIGHTEST** bounding box for the product thumbnail.
+       - **DO NOT** include extra whitespace around the product.
+       - **DO NOT** try to zoom out.
+       - Focus strictly on the product image boundaries.
        - Return `bbox_1000`: `[ymin, xmin, ymax, xmax]` (0-1000 scale).
     
     DATA EXTRACTION RULES:
     - **Name**: Main product name (Translate to Russian).
-    - **Model/Spec**: The variant text (e.g., "500ml White", "1000ml Black").
+    - **Model/Spec**: The variant text (e.g., "500ml White").
     - **Desc**: ULTRA SHORT summary (max 5 words). E.g., "Plastic Cup 500ml". Translate to Russian.
     - **Price**: Extract the price for this row.
     - **Qty**: Extract quantity for this row.
@@ -390,7 +400,7 @@ def parse_image_with_ai(image_file, client):
               "desc_ru": "...", 
               "price_cny": 5.5, 
               "qty": 100,
-              "bbox_1000": [100, 10, 200, 110] 
+              "bbox_1000": [100, 10, 150, 60] 
             },
             ...
         ]
@@ -909,10 +919,10 @@ if selected_nav == "Quotation":
                         if ai_res and "items" in ai_res:
                             for raw_item in ai_res["items"]:
                                 
-                                # 核心：智能裁剪 (Smart Square Expand)
+                                # 核心：智能裁剪 (Smart Tight Crop)
                                 cropped_bytes = original_bytes
                                 if "bbox_1000" in raw_item:
-                                    cropped_bytes = crop_image_smartly(original_bytes, raw_item["bbox_1000"])
+                                    cropped_bytes = crop_image_tightly(original_bytes, raw_item["bbox_1000"])
                                 
                                 new_items.append({
                                     "model": raw_item.get('model', ''), 
@@ -939,7 +949,7 @@ if selected_nav == "Quotation":
                     
                     if new_items:
                         st.session_state["quote_items"].extend(new_items)
-                        status.update(label=f"成功识别 {len(new_items)} 个商品 (已智能裁剪)", state="complete")
+                        status.update(label=f"成功识别 {len(new_items)} 个商品 (已自动裁剪)", state="complete")
                         time.sleep(1)
                         st.rerun()
                     else:
@@ -1350,3 +1360,5 @@ elif selected_nav == "Import":
                     
                 s.update(label="操作完成", state="complete")
             time.sleep(1); st.rerun()
+
+```
