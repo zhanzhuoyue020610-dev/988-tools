@@ -98,7 +98,7 @@ components.html("""
     </script>
 """, height=0)
 
-# 注入 CSS (深蓝流光风格)
+# 注入 CSS (高级感流光 UI)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -269,12 +269,16 @@ class EmailEngine:
         self.config = config 
         self.sender_name = sender_name
 
-    def send_email(self, to_email, subject, body_html):
+    def send_email(self, to_email, subject, body_text):
         if not self.config: return False, "配置缺失"
         try:
-            msg = MIMEText(body_html, 'html', 'utf-8')
-            # 🔥 修复：使用 Username 作为发件人名，不使用中文 Real Name
-            # 格式：Username | 988 Group <email@domain.com>
+            # 🔥 修复：后台自动将 \n 转换为 <br>
+            # 这样输入框里是纯文本，发出去是 HTML
+            html_content = body_text.replace("\n", "<br>")
+            
+            msg = MIMEText(html_content, 'html', 'utf-8')
+            
+            # 🔥 修复：使用 Username | 988 Group
             display_from = f"{self.sender_name} | 988 Group"
             msg['From'] = formataddr((Header(display_from, 'utf-8').encode(), self.config['email']))
             msg['To'] = to_email
@@ -487,24 +491,22 @@ def get_daily_motivation(client):
         except: st.session_state["motivation_quote"] = random.choice(local_quotes)
     return st.session_state["motivation_quote"]
 
-# 🔥 核心升级：AI 生成开发信 (必须提及店铺名和产品)
-def ai_generate_email_reply(client, context, user_real_name, shop_name):
+# 🔥 核心升级：AI 生成纯文本，Python 转 HTML
+def ai_generate_email_reply(client, context, user_username, shop_name):
     prompt = f"""
-    Role: Professional Logistics Sales Rep from 988 Group (China to Russia Logistics).
-    My Name: {user_real_name}
+    Role: Professional Logistics Sales Rep from 988 Group.
+    My Name: {user_username}
     Target Client: {shop_name} (Ozon Seller).
     
-    Task: Write a cold email body (HTML) in Russian.
-    Rules:
+    Task: Write a cold email body in Russian.
+    Requirements:
     1. Greeting: "Hello team at {shop_name}, I saw your store on Ozon and..."
     2. Context: Infer what they sell based on the shop name (e.g. if name is "ToyStore", mention toys).
     3. Offer: We provide fast customs clearance and white tax compliance for their specific products.
-    4. NO Subject Line in output. Only body.
-    5. NO Markdown code blocks.
-    6. Use <br> for line breaks and <p> for paragraphs.
-    7. No emojis.
+    4. Format: PLAIN TEXT only. Use newlines for paragraphs. NO HTML tags (no <br>, no <p>).
+    5. Tone: Professional, direct. No emojis.
     
-    Output JSON: {{ "body_html": "..." }}
+    Output JSON: {{ "body_text": "..." }}
     """
     try:
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}], response_format={"type": "json_object"})
@@ -655,6 +657,7 @@ def admin_bulk_upload_to_pool(rows_to_insert):
                 res = supabase.table('leads').select('phone').in_('phone', batch).execute()
                 for item in res.data: existing.add(str(item['phone']))
         
+        # 允许入库：如果手机号不存在 或者 只有邮箱
         final_rows = [r for r in rows_to_insert if (not r['phone']) or (str(r['phone']) not in existing)]
         
         if not final_rows: return 0, "重复数据"
@@ -957,11 +960,12 @@ elif selected_nav == "Workbench":
                             if draft:
                                 # 🔥 主题固定格式：Username | 988 Group
                                 st.session_state['mail_subj'] = f"{st.session_state['username']} | 988 Group"
-                                st.session_state['mail_body'] = draft.get('body_html')
+                                # 🔥 修复：只保留 body_text（无标签纯文本）
+                                st.session_state['mail_body'] = draft.get('body_text')
                     
                     with st.form("send_mail_form"):
                         subj = st.text_input("主题", value=st.session_state.get('mail_subj', ''))
-                        body = st.text_area("正文 (支持 HTML)", value=st.session_state.get('mail_body', ''), height=200)
+                        body = st.text_area("正文 (纯文本，自动换行)", value=st.session_state.get('mail_body', ''), height=200)
                         
                         if st.form_submit_button("发送邮件"):
                             if email_engine:
