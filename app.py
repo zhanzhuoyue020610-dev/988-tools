@@ -1279,4 +1279,104 @@ elif selected_nav == "WeChat":
         try:
             wc_tasks = get_wechat_tasks(st.session_state['username'])
             if not wc_tasks:
-                st.markdown("""<div class="custom-alert alert-info">今日无维护任务</div>
+                st.markdown("""<div class="custom-alert alert-info">今日无维护任务</div>""", unsafe_allow_html=True)
+            else:
+                for task in wc_tasks:
+                    with st.expander(f"客户编号：{task['customer_code']}", expanded=True):
+                        script = get_wechat_maintenance_script(client, task['customer_code'], st.session_state['username'])
+                        st.code(script, language="text")
+                        c1, c2 = st.columns([3, 1])
+                        with c1: st.caption(f"上次联系：{task['last_contact_date']}")
+                        with c2:
+                            if st.button("完成打卡", key=f"wc_done_{task['id']}"):
+                                complete_wechat_task(task['id'], task['cycle_days'], st.session_state['username'])
+                                st.toast(f"积分 +{CONFIG['POINTS_WECHAT_TASK']}")
+                                time.sleep(1); st.rerun()
+        except Exception as e:
+            st.markdown(f"""<div class="custom-alert alert-error">数据加载失败: {str(e)} (请检查 RLS)</div>""", unsafe_allow_html=True)
+
+elif selected_nav == "Logs":
+    st.markdown("#### 活动日志监控")
+    d = st.date_input("选择日期", date.today())
+    c, f = get_daily_logs(d.isoformat())
+    c1, c2 = st.columns(2)
+    with c1: st.markdown("领取记录"); st.dataframe(c, use_container_width=True)
+    with c2: st.markdown("完成记录"); st.dataframe(f, use_container_width=True)
+
+elif selected_nav == "Team":
+    users = pd.DataFrame(supabase.table('users').select("*").neq('role', 'admin').execute().data)
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        u = st.radio("员工列表", users['username'].tolist() if not users.empty else [], label_visibility="collapsed")
+        with st.expander("新增员工"):
+            with st.form("new_user"):
+                nu = st.text_input("用户名"); np = st.text_input("密码", type="password"); nn = st.text_input("真实姓名")
+                if st.form_submit_button("创建账号"): create_user(nu, np, nn); st.rerun()
+    with c2:
+        if u:
+            info = users[users['username']==u].iloc[0]
+            tc, td, _ = get_user_historical_data(u)
+            perf = get_user_daily_performance(u)
+            st.markdown(f"### {info['real_name']}")
+            st.caption(f"账号: {info['username']} | 积分: {info.get('points', 0)} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
+            
+            new_limit = st.slider("每日任务上限", 0, 100, int(info.get('daily_limit') or 25))
+            if st.button("更新上限"): update_user_limit(u, new_limit); st.toast("已更新"); time.sleep(0.5); st.rerun()
+            
+            st.bar_chart(perf.head(14))
+
+elif selected_nav == "Import":
+    pool = get_public_pool_count()
+    st.metric("公海池库存", pool)
+    if st.button("回收过期任务"): 
+        n = recycle_expired_tasks()
+        st.success(f"已回收 {n} 个任务")
+            
+    st.markdown("#### 批量导入")
+    force = st.checkbox("跳过验证（强行入库）")
+    f = st.file_uploader("上传 Excel/CSV", type=['csv', 'xlsx'])
+    if f and st.button("开始清洗入库"):
+        try:
+            df = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
+            st.info(f"解析到 {len(df)} 行数据")
+            with st.status("正在处理...", expanded=True) as s:
+                rows = []
+                for _, r in df.iterrows():
+                    row_str = " ".join([str(x) for x in r.values])
+                    emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', row_str)
+                    phones = extract_all_numbers(r)
+                    
+                    if emails or phones:
+                        email = emails[0] if emails else None
+                        phone = phones[0] if phones else None 
+                        
+                        if phone and not force:
+                            res, _, _ = process_checknumber_task([phone], CN_KEY, CN_USER)
+                            if res.get(phone) != 'valid': phone = None
+                        
+                        if not email and not phone: continue
+
+                        # 智能提取店铺名 (Col 1)
+                        shop_name = str(r.iloc[1]) if len(r) > 1 else 'Shop'
+                        
+                        rows.append({
+                            "email": email,
+                            "phone": phone,
+                            "shop_name": shop_name,
+                            "shop_link": str(r.iloc[0]) if len(r) > 0 else '',
+                            "ai_message": "",
+                            "retry_count": 0, 
+                            "is_frozen": False
+                        })
+                        
+                        if len(rows) >= 100:
+                            count, msg = admin_bulk_upload_to_pool(rows)
+                            s.write(f"批次入库: {count}")
+                            rows = []
+                
+                if rows:
+                    count, msg = admin_bulk_upload_to_pool(rows)
+                    s.write(f"最终批次入库: {count}")
+                
+                s.update(label="处理完成", state="complete")
+        except Exception as e: st.error(str(e))
