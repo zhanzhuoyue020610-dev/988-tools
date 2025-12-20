@@ -491,8 +491,11 @@ def get_daily_motivation(client):
         except: st.session_state["motivation_quote"] = random.choice(local_quotes)
     return st.session_state["motivation_quote"]
 
-# 🔥 核心升级：AI 生成纯文本，Python 转 HTML
-def ai_generate_email_reply(client, context, user_username, shop_name):
+# 🔥 核心升级：AI 生成纯文本，Python 转 HTML，增加客户称呼判断
+def ai_generate_email_reply(client, context, user_username, shop_name, customer_name=None):
+    # 根据是否有客户名字，决定称呼
+    greeting = f"Здравствуйте, {customer_name}" if customer_name else f"Здравствуйте, команда {shop_name}"
+    
     prompt = f"""
     Role: Professional Logistics Sales Rep from 988 Group.
     My Name: {user_username}
@@ -500,7 +503,7 @@ def ai_generate_email_reply(client, context, user_username, shop_name):
     
     Task: Write a cold email body in Russian.
     Requirements:
-    1. Greeting: "Здравствуйте, команда {shop_name}, я увидел ваш магазин на Ozon и..." (Must use Russian).
+    1. Greeting: "{greeting}, я увидел ваш магазин на Ozon и..." (Must use Russian).
     2. Context: Infer what they sell based on the shop name (e.g. if name is "ToyStore", mention toys in Russian).
     3. Offer: We provide fast customs clearance and white tax compliance for their specific products.
     4. Format: PLAIN TEXT only. Use newlines for paragraphs. NO HTML tags (no <br>, no <p>).
@@ -657,6 +660,7 @@ def admin_bulk_upload_to_pool(rows_to_insert):
                 res = supabase.table('leads').select('phone').in_('phone', batch).execute()
                 for item in res.data: existing.add(str(item['phone']))
         
+        # 允许入库：如果手机号不存在 或者 只有邮箱
         final_rows = [r for r in rows_to_insert if (not r['phone']) or (str(r['phone']) not in existing)]
         
         if not final_rows: return 0, "重复数据"
@@ -918,26 +922,50 @@ elif selected_nav == "Workbench":
         today_str = date.today().isoformat()
         my_tasks = supabase.table('leads').select("*").eq('assigned_to', st.session_state['username']).neq('email', None).execute().data
         
+        # 布局：左侧列表 / 中间工作区
+        # 增加一个“手动录入”的分支
         c_list, c_work = st.columns([1, 2])
         
         with c_list:
             st.markdown("#### 任务列表")
             
-            if st.button("领取新邮件客户"):
-                pool = supabase.table('leads').select('id').is_('assigned_to', 'null').neq('email', None).limit(5).execute().data
-                if pool:
-                    ids = [x['id'] for x in pool]
-                    supabase.table('leads').update({'assigned_to': st.session_state['username'], 'assigned_at': today_str}).in_('id', ids).execute()
-                    st.rerun()
-                else:
-                    st.info("公海池暂无新邮件客户")
+            # Tab 切换：任务列表 vs 手动输入
+            sub_tabs = st.tabs(["我的任务", "手动录入"])
             
-            for task in my_tasks:
-                status_icon = "🟢" if task.get('is_contacted') else "🔴"
-                label = f"{status_icon} {task.get('shop_name', 'Unknown')}"
-                if st.button(label, key=f"mail_sel_{task['id']}", use_container_width=True):
-                    st.session_state['selected_mail_lead'] = task
-            
+            with sub_tabs[0]:
+                if st.button("领取新邮件客户"):
+                    pool = supabase.table('leads').select('id').is_('assigned_to', 'null').neq('email', None).limit(5).execute().data
+                    if pool:
+                        ids = [x['id'] for x in pool]
+                        supabase.table('leads').update({'assigned_to': st.session_state['username'], 'assigned_at': today_str}).in_('id', ids).execute()
+                        st.rerun()
+                    else:
+                        st.info("公海池暂无新邮件客户")
+                
+                for task in my_tasks:
+                    status_icon = "🟢" if task.get('is_contacted') else "🔴"
+                    label = f"{status_icon} {task.get('shop_name', 'Unknown')}"
+                    if st.button(label, key=f"mail_sel_{task['id']}", use_container_width=True):
+                        st.session_state['selected_mail_lead'] = task
+                        st.session_state['is_manual_lead'] = False
+
+            with sub_tabs[1]:
+                with st.form("manual_lead_form"):
+                    m_name = st.text_input("客户称呼 (Name)")
+                    m_shop = st.text_input("店铺/公司名 (Shop)")
+                    m_email = st.text_input("邮箱 (Email)")
+                    if st.form_submit_button("载入工作台"):
+                        # 创建一个临时 lead 对象
+                        st.session_state['selected_mail_lead'] = {
+                            "id": "manual",
+                            "shop_name": m_shop,
+                            "email": m_email,
+                            "phone": "",
+                            "contact_name": m_name # 额外字段
+                        }
+                        st.session_state['is_manual_lead'] = True
+                        st.rerun()
+
         with c_work:
             lead = st.session_state.get('selected_mail_lead')
             if lead:
@@ -949,29 +977,34 @@ elif selected_nav == "Workbench":
                 with t_compose:
                     if st.button("✨ AI 自动生成俄语开发信"):
                         with st.status("AI 正在撰写...", expanded=True):
-                            # 🔥 调用更新后的 AI 生成逻辑
+                            # 🔥 调用更新后的 AI 生成逻辑，支持手动输入的 Name
+                            contact_name = lead.get('contact_name') 
                             draft = ai_generate_email_reply(
                                 client, 
                                 "Cold Outreach", 
                                 st.session_state['username'], # 传入用户名
-                                lead.get('shop_name', 'Ozon Seller')
+                                lead.get('shop_name', 'Ozon Seller'),
+                                customer_name=contact_name
                             )
                             if draft:
-                                # 🔥 主题固定格式：Username | 988 Group
-                                st.session_state['mail_subj'] = f"{st.session_state['username']} | 988 Group"
+                                # 🔥 主题固定格式：Username | 988 Group | China Logistics
+                                st.session_state['mail_subj'] = f"{st.session_state['username']} | 988 Group | China Logistics"
                                 # 🔥 修复：只保留 body_text（无标签纯文本）
                                 st.session_state['mail_body'] = draft.get('body_text')
                     
                     with st.form("send_mail_form"):
                         subj = st.text_input("主题", value=st.session_state.get('mail_subj', ''))
-                        body = st.text_area("正文 (纯文本，自动换行)", value=st.session_state.get('mail_body', ''), height=200)
+                        # 🔥 提示用户：这里是纯文本，Python 会自动转 HTML
+                        body = st.text_area("正文 (纯文本，回车自动换行)", value=st.session_state.get('mail_body', ''), height=300)
                         
                         if st.form_submit_button("发送邮件"):
                             if email_engine:
                                 success, msg = email_engine.send_email(lead.get('email'), subj, body)
                                 if success:
                                     st.success("发送成功")
-                                    supabase.table('leads').update({'is_contacted': True, 'last_email_time': datetime.now().isoformat()}).eq('id', lead['id']).execute()
+                                    # 只有非手动录入的任务才更新数据库状态
+                                    if not st.session_state.get('is_manual_lead', False):
+                                        supabase.table('leads').update({'is_contacted': True, 'last_email_time': datetime.now().isoformat()}).eq('id', lead['id']).execute()
                                 else:
                                     st.error(f"发送失败: {msg}")
                             else:
