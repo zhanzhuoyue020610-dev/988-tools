@@ -51,7 +51,6 @@ warnings.filterwarnings("ignore")
 # ==========================================
 st.set_page_config(page_title="988 Group CRM", layout="wide", page_icon="G")
 
-# 读取本地 logo_b64.txt 文件
 def load_logo_b64():
     try:
         with open("logo_b64.txt", "r") as f:
@@ -70,7 +69,7 @@ CONFIG = {
     "AI_MODEL": "gpt-4o" 
 }
 
-# 注入时钟 HTML (流光风格)
+# 注入时钟 HTML
 st.markdown("""
 <div id="clock-container" style="
     position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
@@ -99,7 +98,7 @@ components.html("""
     </script>
 """, height=0)
 
-# 注入 CSS (恢复高级感 UI)
+# 注入 CSS (深蓝流光风格)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -274,7 +273,8 @@ class EmailEngine:
         if not self.config: return False, "配置缺失"
         try:
             msg = MIMEText(body_html, 'html', 'utf-8')
-            # 🔥 智能发件人设置：姓名 | 988 Group <email>
+            # 🔥 修复：使用 Username 作为发件人名，不使用中文 Real Name
+            # 格式：Username | 988 Group <email@domain.com>
             display_from = f"{self.sender_name} | 988 Group"
             msg['From'] = formataddr((Header(display_from, 'utf-8').encode(), self.config['email']))
             msg['To'] = to_email
@@ -494,15 +494,17 @@ def ai_generate_email_reply(client, context, user_real_name, shop_name):
     My Name: {user_real_name}
     Target Client: {shop_name} (Ozon Seller).
     
-    Task: Write a cold email in Russian.
-    Requirements:
-    1. Subject: Attractive, mention logistics/shipping savings for {shop_name}.
-    2. Opening: "Hello team at {shop_name}, I saw your store on Ozon and..."
-    3. Context: Infer what they sell based on the shop name (e.g. if name is "ToyStore", mention toys).
-    4. Offer: We provide fast customs clearance and white tax compliance for their specific products.
-    5. No emojis. Professional tone.
+    Task: Write a cold email body (HTML) in Russian.
+    Rules:
+    1. Greeting: "Hello team at {shop_name}, I saw your store on Ozon and..."
+    2. Context: Infer what they sell based on the shop name (e.g. if name is "ToyStore", mention toys).
+    3. Offer: We provide fast customs clearance and white tax compliance for their specific products.
+    4. NO Subject Line in output. Only body.
+    5. NO Markdown code blocks.
+    6. Use <br> for line breaks and <p> for paragraphs.
+    7. No emojis.
     
-    Output JSON: {{ "subject": "...", "body_html": "..." }} (Use <br> for line breaks)
+    Output JSON: {{ "body_html": "..." }}
     """
     try:
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}], response_format={"type": "json_object"})
@@ -653,7 +655,6 @@ def admin_bulk_upload_to_pool(rows_to_insert):
                 res = supabase.table('leads').select('phone').in_('phone', batch).execute()
                 for item in res.data: existing.add(str(item['phone']))
         
-        # 允许入库：如果手机号不存在 或者 只有邮箱
         final_rows = [r for r in rows_to_insert if (not r['phone']) or (str(r['phone']) not in existing)]
         
         if not final_rows: return 0, "重复数据"
@@ -903,8 +904,8 @@ if selected_nav == "Settings":
 elif selected_nav == "Workbench":
     # 检查邮箱配置
     user_conf = get_user_email_config(st.session_state['username'])
-    # 传入真实姓名用于发件人显示
-    email_engine = EmailEngine(user_conf, st.session_state.get('real_name', 'Sales')) if user_conf else None
+    # 🔥 修复：传入用户名 (Username) 作为发件人名
+    email_engine = EmailEngine(user_conf, st.session_state['username']) if user_conf else None
     
     if not email_engine:
         st.markdown("""<div class="custom-alert alert-error">请先在 [邮箱配置] 中设置您的发件箱信息</div>""", unsafe_allow_html=True)
@@ -950,11 +951,12 @@ elif selected_nav == "Workbench":
                             draft = ai_generate_email_reply(
                                 client, 
                                 "Cold Outreach", 
-                                st.session_state.get('real_name', 'Sales'),
+                                st.session_state['username'], # 传入用户名
                                 lead.get('shop_name', 'Ozon Seller')
                             )
                             if draft:
-                                st.session_state['mail_subj'] = draft.get('subject')
+                                # 🔥 主题固定格式：Username | 988 Group
+                                st.session_state['mail_subj'] = f"{st.session_state['username']} | 988 Group"
                                 st.session_state['mail_body'] = draft.get('body_html')
                     
                     with st.form("send_mail_form"):
@@ -1277,104 +1279,4 @@ elif selected_nav == "WeChat":
         try:
             wc_tasks = get_wechat_tasks(st.session_state['username'])
             if not wc_tasks:
-                st.markdown("""<div class="custom-alert alert-info">今日无维护任务</div>""", unsafe_allow_html=True)
-            else:
-                for task in wc_tasks:
-                    with st.expander(f"客户编号：{task['customer_code']}", expanded=True):
-                        script = get_wechat_maintenance_script(client, task['customer_code'], st.session_state['username'])
-                        st.code(script, language="text")
-                        c1, c2 = st.columns([3, 1])
-                        with c1: st.caption(f"上次联系：{task['last_contact_date']}")
-                        with c2:
-                            if st.button("完成打卡", key=f"wc_done_{task['id']}"):
-                                complete_wechat_task(task['id'], task['cycle_days'], st.session_state['username'])
-                                st.toast(f"积分 +{CONFIG['POINTS_WECHAT_TASK']}")
-                                time.sleep(1); st.rerun()
-        except Exception as e:
-            st.markdown(f"""<div class="custom-alert alert-error">数据加载失败: {str(e)} (请检查 RLS)</div>""", unsafe_allow_html=True)
-
-elif selected_nav == "Logs":
-    st.markdown("#### 活动日志监控")
-    d = st.date_input("选择日期", date.today())
-    c, f = get_daily_logs(d.isoformat())
-    c1, c2 = st.columns(2)
-    with c1: st.markdown("领取记录"); st.dataframe(c, use_container_width=True)
-    with c2: st.markdown("完成记录"); st.dataframe(f, use_container_width=True)
-
-elif selected_nav == "Team":
-    users = pd.DataFrame(supabase.table('users').select("*").neq('role', 'admin').execute().data)
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        u = st.radio("员工列表", users['username'].tolist() if not users.empty else [], label_visibility="collapsed")
-        with st.expander("新增员工"):
-            with st.form("new_user"):
-                nu = st.text_input("用户名"); np = st.text_input("密码", type="password"); nn = st.text_input("真实姓名")
-                if st.form_submit_button("创建账号"): create_user(nu, np, nn); st.rerun()
-    with c2:
-        if u:
-            info = users[users['username']==u].iloc[0]
-            tc, td, _ = get_user_historical_data(u)
-            perf = get_user_daily_performance(u)
-            st.markdown(f"### {info['real_name']}")
-            st.caption(f"账号: {info['username']} | 积分: {info.get('points', 0)} | 最后上线: {str(info.get('last_seen','-'))[:16]}")
-            
-            new_limit = st.slider("每日任务上限", 0, 100, int(info.get('daily_limit') or 25))
-            if st.button("更新上限"): update_user_limit(u, new_limit); st.toast("已更新"); time.sleep(0.5); st.rerun()
-            
-            st.bar_chart(perf.head(14))
-
-elif selected_nav == "Import":
-    pool = get_public_pool_count()
-    st.metric("公海池库存", pool)
-    if st.button("回收过期任务"): 
-        n = recycle_expired_tasks()
-        st.success(f"已回收 {n} 个任务")
-            
-    st.markdown("#### 批量导入")
-    force = st.checkbox("跳过验证（强行入库）")
-    f = st.file_uploader("上传 Excel/CSV", type=['csv', 'xlsx'])
-    if f and st.button("开始清洗入库"):
-        try:
-            df = pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
-            st.info(f"解析到 {len(df)} 行数据")
-            with st.status("正在处理...", expanded=True) as s:
-                rows = []
-                for _, r in df.iterrows():
-                    row_str = " ".join([str(x) for x in r.values])
-                    emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', row_str)
-                    phones = extract_all_numbers(r)
-                    
-                    if emails or phones:
-                        email = emails[0] if emails else None
-                        phone = phones[0] if phones else None 
-                        
-                        if phone and not force:
-                            res, _, _ = process_checknumber_task([phone], CN_KEY, CN_USER)
-                            if res.get(phone) != 'valid': phone = None
-                        
-                        if not email and not phone: continue
-
-                        # 尝试智能提取店铺名 (通常在第二列)
-                        shop_name = str(r.iloc[1]) if len(r) > 1 else 'Shop'
-                        
-                        rows.append({
-                            "email": email,
-                            "phone": phone,
-                            "shop_name": shop_name,
-                            "shop_link": str(r.iloc[0]) if len(r) > 0 else '',
-                            "ai_message": "",
-                            "retry_count": 0, 
-                            "is_frozen": False
-                        })
-                        
-                        if len(rows) >= 100:
-                            count, msg = admin_bulk_upload_to_pool(rows)
-                            s.write(f"批次入库: {count}")
-                            rows = []
-                
-                if rows:
-                    count, msg = admin_bulk_upload_to_pool(rows)
-                    s.write(f"最终批次入库: {count}")
-                
-                s.update(label="处理完成", state="complete")
-        except Exception as e: st.error(str(e))
+                st.markdown("""<div class="custom-alert alert-info">今日无维护任务</div>
