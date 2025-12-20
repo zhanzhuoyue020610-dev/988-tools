@@ -15,7 +15,7 @@ import base64
 import smtplib
 from email.mime.text import MIMEText
 from email.header import Header
-from email.utils import formataddr
+from email.utils import formataddr, parseaddr
 from datetime import date, datetime, timedelta
 import concurrent.futures
 import streamlit.components.v1 as components
@@ -24,7 +24,7 @@ from PIL import Image
 
 # 尝试导入 imap_tools
 try:
-    from imap_tools import MailBox, AND
+    from imap_tools import MailBox, AND, OR
     IMAP_TOOLS_INSTALLED = True
 except ImportError:
     IMAP_TOOLS_INSTALLED = False
@@ -161,6 +161,8 @@ st.markdown("""
     .email-card.sent { border-left-color: #ff5546; }
     .email-meta { font-size: 11px; color: #888; margin-bottom: 5px; display: flex; justify-content: space-between; }
     .email-body { font-size: 13px; color: #e3e3e3; white-space: pre-wrap; line-height: 1.5; }
+    
+    .new-reply-badge { background-color: #ff5f56; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-right: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -272,13 +274,10 @@ class EmailEngine:
     def send_email(self, to_email, subject, body_text):
         if not self.config: return False, "配置缺失"
         try:
-            # 🔥 修复：Python 自动将换行符转换为 HTML <br>，而不是让 AI 生成
-            # 这样输入框里是纯文本，发出去是 HTML
+            # Python 自动转 HTML
             html_content = body_text.replace("\n", "<br>")
-            
             msg = MIMEText(html_content, 'html', 'utf-8')
             
-            # 🔥 修复：使用 Username | 988 Group
             display_from = f"{self.sender_name} | 988 Group"
             msg['From'] = formataddr((Header(display_from, 'utf-8').encode(), self.config['email']))
             msg['To'] = to_email
@@ -292,28 +291,69 @@ class EmailEngine:
         except Exception as e:
             return False, str(e)
 
-    def fetch_emails(self, filter_email):
+    # 🔥 修复：更强力的邮件抓取 (只看收件箱，模糊匹配发件人)
+    def fetch_thread(self, client_email):
         if not self.config or not IMAP_TOOLS_INSTALLED: return []
         emails = []
         try:
             with MailBox(self.config['imap_server']).login(self.config['email'], self.config['password']) as mailbox:
-                folders = ['INBOX', 'Sent Messages', 'Sent Items', 'Sent'] 
-                for folder in mailbox.folder.list():
-                    name = folder['name']
-                    if any(x in name for x in folders):
-                        mailbox.folder.set(name)
-                        for msg in mailbox.fetch(AND(or_from_=filter_email, or_to=filter_email), limit=5, reverse=True):
-                            emails.append({
-                                "subject": msg.subject,
-                                "from": msg.from_,
-                                "to": msg.to,
-                                "date": msg.date_str,
-                                "text": msg.text or msg.html,
-                                "folder": name
-                            })
+                # 1. 抓取收件箱 (INBOX) 里的回复
+                mailbox.folder.set('INBOX')
+                # 宽松匹配：只要发件人包含 client_email
+                for msg in mailbox.fetch(limit=10, reverse=True):
+                    if client_email in msg.from_ or client_email in msg.to:
+                        emails.append(self._parse_msg(msg, "Inbox"))
+                
+                # 2. 抓取已发送 (Sent) - 尝试常见文件夹名
+                sent_folders = ['Sent Messages', 'Sent Items', 'Sent', '[Gmail]/Sent Mail']
+                for f in mailbox.folder.list():
+                    if any(s in f['name'] for s in sent_folders):
+                        mailbox.folder.set(f['name'])
+                        for msg in mailbox.fetch(limit=10, reverse=True):
+                             if client_email in msg.to:
+                                emails.append(self._parse_msg(msg, "Sent"))
+                        break
+                        
         except Exception as e:
             print(f"IMAP Error: {e}")
+            
+        # 按时间排序
         return sorted(emails, key=lambda x: x['date'], reverse=True)
+
+    def _parse_msg(self, msg, folder):
+        return {
+            "subject": msg.subject,
+            "from": msg.from_,
+            "to": msg.to,
+            "date": msg.date_str,
+            "text": msg.text or msg.html,
+            "folder": folder
+        }
+    
+    # 🔥 全局同步功能：扫描收件箱，匹配数据库中的客户
+    def sync_inbox_for_replies(self, username):
+        if not self.config or not IMAP_TOOLS_INSTALLED: return 0
+        count = 0
+        try:
+            # 获取该业务员名下所有已联系的客户邮箱
+            leads = supabase.table('leads').select('id, email').eq('assigned_to', username).eq('is_contacted', True).neq('email', None).execute().data
+            if not leads: return 0
+            
+            lead_map = {l['email']: l['id'] for l in leads}
+            
+            with MailBox(self.config['imap_server']).login(self.config['email'], self.config['password']) as mailbox:
+                mailbox.folder.set('INBOX')
+                # 只看最近 7 天的未读邮件，或者所有邮件
+                for msg in mailbox.fetch(limit=50, reverse=True):
+                    # 提取发件人邮箱
+                    from_email = parseaddr(msg.from_)[1]
+                    if from_email in lead_map:
+                        # 找到匹配！标记数据库
+                        supabase.table('leads').update({'has_new_reply': True}).eq('id', lead_map[from_email]).execute()
+                        count += 1
+        except Exception as e:
+            print(f"Sync Error: {e}")
+        return count
 
 # ==========================================
 # 报价单 & AI 辅助
@@ -493,7 +533,6 @@ def get_daily_motivation(client):
 
 # 🔥 核心升级：AI 生成纯文本，Python 转 HTML，增加客户称呼判断
 def ai_generate_email_reply(client, context, user_username, shop_name, customer_name=None):
-    # 根据是否有客户名字，决定称呼
     greeting = f"Здравствуйте, {customer_name}" if customer_name else f"Здравствуйте, команда {shop_name}"
     
     prompt = f"""
@@ -660,7 +699,6 @@ def admin_bulk_upload_to_pool(rows_to_insert):
                 res = supabase.table('leads').select('phone').in_('phone', batch).execute()
                 for item in res.data: existing.add(str(item['phone']))
         
-        # 允许入库：如果手机号不存在 或者 只有邮箱
         final_rows = [r for r in rows_to_insert if (not r['phone']) or (str(r['phone']) not in existing)]
         
         if not final_rows: return 0, "重复数据"
@@ -920,48 +958,62 @@ elif selected_nav == "Workbench":
     
     if mode == "邮件营销":
         today_str = date.today().isoformat()
-        my_tasks = supabase.table('leads').select("*").eq('assigned_to', st.session_state['username']).neq('email', None).execute().data
+        # 增加一个全局同步按钮
+        c_sync, _ = st.columns([1, 4])
+        with c_sync:
+            if st.button("🔄 同步所有邮件"):
+                with st.status("正在同步收件箱...", expanded=True):
+                    count = email_engine.sync_inbox_for_replies(st.session_state['username'])
+                    st.write(f"发现 {count} 个新回复！")
+                st.rerun()
+
+        # 分离出两个列表：所有有回复的 / 所有已领取的
+        # 1. 待跟进 (有新回复)
+        active_leads = supabase.table('leads').select("*").eq('assigned_to', st.session_state['username']).eq('has_new_reply', True).execute().data
         
-        # 布局：左侧列表 / 中间工作区
-        # 增加一个“手动录入”的分支
+        # 2. 公海池 (待开发)
+        pending_leads = supabase.table('leads').select("*").eq('assigned_to', st.session_state['username']).eq('has_new_reply', False).neq('email', None).execute().data
+        
         c_list, c_work = st.columns([1, 2])
         
         with c_list:
-            st.markdown("#### 任务列表")
+            tab_todo, tab_pool, tab_manual = st.tabs(["🔴 待跟进", "⚪ 待开发", "✏️ 手动录入"])
             
-            # Tab 切换：任务列表 vs 手动输入
-            sub_tabs = st.tabs(["我的任务", "手动录入"])
+            with tab_todo:
+                if not active_leads: st.info("暂无新回复")
+                for task in active_leads:
+                    if st.button(f"🔴 {task.get('shop_name', 'Unknown')}", key=f"active_{task['id']}", use_container_width=True):
+                        st.session_state['selected_mail_lead'] = task
+                        st.session_state['is_manual_lead'] = False
+                        # 点击即读，清除红点
+                        supabase.table('leads').update({'has_new_reply': False}).eq('id', task['id']).execute()
             
-            with sub_tabs[0]:
+            with tab_pool:
                 if st.button("领取新邮件客户"):
                     pool = supabase.table('leads').select('id').is_('assigned_to', 'null').neq('email', None).limit(5).execute().data
                     if pool:
                         ids = [x['id'] for x in pool]
                         supabase.table('leads').update({'assigned_to': st.session_state['username'], 'assigned_at': today_str}).in_('id', ids).execute()
                         st.rerun()
-                    else:
-                        st.info("公海池暂无新邮件客户")
                 
-                for task in my_tasks:
-                    status_icon = "🟢" if task.get('is_contacted') else "🔴"
-                    label = f"{status_icon} {task.get('shop_name', 'Unknown')}"
-                    if st.button(label, key=f"mail_sel_{task['id']}", use_container_width=True):
+                for task in pending_leads:
+                    status_icon = "🟢" if task.get('is_contacted') else "⚪"
+                    if st.button(f"{status_icon} {task.get('shop_name', 'Unknown')}", key=f"pool_{task['id']}", use_container_width=True):
                         st.session_state['selected_mail_lead'] = task
                         st.session_state['is_manual_lead'] = False
 
-            with sub_tabs[1]:
+            with tab_manual:
                 with st.form("manual_lead_form"):
                     m_name = st.text_input("客户称呼 (Name)")
                     m_shop = st.text_input("店铺/公司名 (Shop)")
                     m_email = st.text_input("邮箱 (Email)")
                     if st.form_submit_button("载入工作台"):
-                        # 创建一个临时 lead 对象
                         st.session_state['selected_mail_lead'] = {
                             "id": "manual",
                             "shop_name": m_shop,
                             "email": m_email,
                             "phone": "",
-                            "contact_name": m_name # 额外字段
+                            "contact_name": m_name 
                         }
                         st.session_state['is_manual_lead'] = True
                         st.rerun()
@@ -977,24 +1029,20 @@ elif selected_nav == "Workbench":
                 with t_compose:
                     if st.button("✨ AI 自动生成俄语开发信"):
                         with st.status("AI 正在撰写...", expanded=True):
-                            # 🔥 调用更新后的 AI 生成逻辑，支持手动输入的 Name
                             contact_name = lead.get('contact_name') 
                             draft = ai_generate_email_reply(
                                 client, 
                                 "Cold Outreach", 
-                                st.session_state['username'], # 传入用户名
+                                st.session_state['username'], 
                                 lead.get('shop_name', 'Ozon Seller'),
                                 customer_name=contact_name
                             )
                             if draft:
-                                # 🔥 主题固定格式：Username | 988 Group | China Logistics
                                 st.session_state['mail_subj'] = f"{st.session_state['username']} | 988 Group | China Logistics"
-                                # 🔥 修复：只保留 body_text（无标签纯文本）
                                 st.session_state['mail_body'] = draft.get('body_text')
                     
                     with st.form("send_mail_form"):
                         subj = st.text_input("主题", value=st.session_state.get('mail_subj', ''))
-                        # 🔥 提示用户：这里是纯文本，Python 会自动转 HTML
                         body = st.text_area("正文 (纯文本，回车自动换行)", value=st.session_state.get('mail_body', ''), height=300)
                         
                         if st.form_submit_button("发送邮件"):
@@ -1002,7 +1050,6 @@ elif selected_nav == "Workbench":
                                 success, msg = email_engine.send_email(lead.get('email'), subj, body)
                                 if success:
                                     st.success("发送成功")
-                                    # 只有非手动录入的任务才更新数据库状态
                                     if not st.session_state.get('is_manual_lead', False):
                                         supabase.table('leads').update({'is_contacted': True, 'last_email_time': datetime.now().isoformat()}).eq('id', lead['id']).execute()
                                 else:
@@ -1011,23 +1058,25 @@ elif selected_nav == "Workbench":
                                 st.error("未配置邮箱")
 
                 with t_history:
-                    if st.button("刷新收件箱"):
-                        emails = email_engine.fetch_emails(lead.get('email'))
-                        if emails:
-                            for em in emails:
-                                css = "sent" if user_conf['email'] in em['from'] else "received"
-                                st.markdown(f"""
-                                <div class="email-card {css}">
-                                    <div class="email-meta">
-                                        <span>{em['date']}</span>
-                                        <span>{em['folder']}</span>
-                                    </div>
-                                    <strong>{em['subject']}</strong>
-                                    <div class="email-body">{em['text'][:200]}...</div>
+                    # 获取该客户的往来邮件
+                    emails = email_engine.fetch_thread(lead.get('email'))
+                    if emails:
+                        for em in emails:
+                            css = "sent" if user_conf['email'] in em['from'] else "received"
+                            # 简单的 HTML 清洗
+                            clean_text = re.sub('<[^<]+?>', '', em['text'])[:300]
+                            st.markdown(f"""
+                            <div class="email-card {css}">
+                                <div class="email-meta">
+                                    <span>{em['date']}</span>
+                                    <span>{em['folder']}</span>
                                 </div>
-                                """, unsafe_allow_html=True)
-                        else:
-                            st.info("暂无往来邮件")
+                                <strong>{em['subject']}</strong>
+                                <div class="email-body">{clean_text}...</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.info("暂无往来邮件 (仅显示收件箱和已发送)")
             else:
                 st.info("请从左侧选择一个客户")
 
