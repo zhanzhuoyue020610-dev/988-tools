@@ -98,7 +98,7 @@ components.html("""
     </script>
 """, height=0)
 
-# 注入 CSS (高级感流光 UI)
+# 注入 CSS (深蓝流光风格)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -272,7 +272,7 @@ class EmailEngine:
     def send_email(self, to_email, subject, body_text):
         if not self.config: return False, "配置缺失"
         try:
-            # 🔥 修复：后台自动将 \n 转换为 <br>
+            # 🔥 修复：Python 自动将换行符转换为 HTML <br>，而不是让 AI 生成
             # 这样输入框里是纯文本，发出去是 HTML
             html_content = body_text.replace("\n", "<br>")
             
@@ -500,8 +500,8 @@ def ai_generate_email_reply(client, context, user_username, shop_name):
     
     Task: Write a cold email body in Russian.
     Requirements:
-    1. Greeting: "Hello team at {shop_name}, I saw your store on Ozon and..."
-    2. Context: Infer what they sell based on the shop name (e.g. if name is "ToyStore", mention toys).
+    1. Greeting: "Здравствуйте, команда {shop_name}, я увидел ваш магазин на Ozon и..." (Must use Russian).
+    2. Context: Infer what they sell based on the shop name (e.g. if name is "ToyStore", mention toys in Russian).
     3. Offer: We provide fast customs clearance and white tax compliance for their specific products.
     4. Format: PLAIN TEXT only. Use newlines for paragraphs. NO HTML tags (no <br>, no <p>).
     5. Tone: Professional, direct. No emojis.
@@ -657,7 +657,6 @@ def admin_bulk_upload_to_pool(rows_to_insert):
                 res = supabase.table('leads').select('phone').in_('phone', batch).execute()
                 for item in res.data: existing.add(str(item['phone']))
         
-        # 允许入库：如果手机号不存在 或者 只有邮箱
         final_rows = [r for r in rows_to_insert if (not r['phone']) or (str(r['phone']) not in existing)]
         
         if not final_rows: return 0, "重复数据"
