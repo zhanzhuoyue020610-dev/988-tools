@@ -98,7 +98,7 @@ components.html("""
     </script>
 """, height=0)
 
-# 注入 CSS (深蓝流光风格)
+# 注入 CSS
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -155,7 +155,6 @@ st.markdown("""
     h1, h2, h3, h4 { color: #ffffff !important; font-weight: 500 !important;}
     .stCaption { color: #8e8e8e !important; }
 
-    /* 邮件卡片样式 */
     .email-card { padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px; margin-bottom: 10px; border-left: 3px solid #444; backdrop-filter: blur(10px); }
     .email-card.received { border-left-color: #4b90ff; }
     .email-card.sent { border-left-color: #ff5546; }
@@ -272,15 +271,12 @@ class EmailEngine:
     def send_email(self, to_email, subject, body_text):
         if not self.config: return False, "配置缺失"
         try:
-            # Python 自动转 HTML
             html_content = body_text.replace("\n", "<br>")
             msg = MIMEText(html_content, 'html', 'utf-8')
-            
             display_from = f"{self.sender_name} | 988 Group"
             msg['From'] = formataddr((Header(display_from, 'utf-8').encode(), self.config['email']))
             msg['To'] = to_email
             msg['Subject'] = Header(subject, 'utf-8')
-
             server = smtplib.SMTP_SSL(self.config['smtp_server'], int(self.config['smtp_port']))
             server.login(self.config['email'], self.config['password'])
             server.sendmail(self.config['email'], [to_email], msg.as_string())
@@ -294,13 +290,11 @@ class EmailEngine:
         emails = []
         try:
             with MailBox(self.config['imap_server']).login(self.config['email'], self.config['password']) as mailbox:
-                # 1. 抓取收件箱 (INBOX) 里的回复
                 mailbox.folder.set('INBOX')
                 for msg in mailbox.fetch(limit=10, reverse=True):
                     if client_email in msg.from_ or client_email in msg.to:
                         emails.append(self._parse_msg(msg, "Inbox"))
                 
-                # 2. 抓取已发送 (Sent)
                 sent_folders = ['Sent Messages', 'Sent Items', 'Sent', '[Gmail]/Sent Mail']
                 for f in mailbox.folder.list():
                     if any(s in f['name'] for s in sent_folders):
@@ -309,10 +303,8 @@ class EmailEngine:
                              if client_email in msg.to:
                                 emails.append(self._parse_msg(msg, "Sent"))
                         break
-                        
         except Exception as e:
             print(f"IMAP Error: {e}")
-            
         return sorted(emails, key=lambda x: x['date'], reverse=True)
 
     def _parse_msg(self, msg, folder):
@@ -331,9 +323,7 @@ class EmailEngine:
         try:
             leads = supabase.table('leads').select('id, email').eq('assigned_to', username).eq('is_contacted', True).neq('email', None).execute().data
             if not leads: return 0
-            
             lead_map = {l['email']: l['id'] for l in leads}
-            
             with MailBox(self.config['imap_server']).login(self.config['email'], self.config['password']) as mailbox:
                 mailbox.folder.set('INBOX')
                 for msg in mailbox.fetch(limit=50, reverse=True):
@@ -345,6 +335,28 @@ class EmailEngine:
             print(f"Sync Error: {e}")
         return count
 
+# 🔥【关键函数】强力清洗电话号码，修复 404 问题
+def clean_phone_for_whatsapp(phone_raw):
+    if pd.isna(phone_raw) or phone_raw == "" or str(phone_raw).lower() == 'nan': return None
+    
+    # 1. 强制转字符串并去掉小数点 (处理 Excel 浮点数)
+    s = str(phone_raw).split('.')[0].strip()
+    
+    # 2. 移除所有非数字字符
+    s = re.sub(r'\D', '', s)
+    
+    if not s: return None
+    
+    # 3. 俄罗斯/哈萨克斯坦号码特殊修正
+    # 如果是 11 位且以 8 开头 -> 改为 7
+    if len(s) == 11 and s.startswith('8'):
+        s = '7' + s[1:]
+    # 如果是 10 位 -> 补 7
+    elif len(s) == 10:
+        s = '7' + s
+        
+    return s
+
 # ==========================================
 # 报价单 & AI 辅助
 # ==========================================
@@ -352,7 +364,6 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     worksheet = workbook.add_worksheet("Sheet1")
-
     fmt_header_main = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center', 'valign': 'vcenter'})
     fmt_header_sub = workbook.add_format({'font_size': 11, 'align': 'left', 'valign': 'vcenter', 'text_wrap': True})
     fmt_table_header = workbook.add_format({'bold': True, 'font_size': 10, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#f0f0f0', 'text_wrap': True})
@@ -362,7 +373,6 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     fmt_bold_red = workbook.add_format({'bold': True, 'color': 'red', 'font_size': 11})
     fmt_total_row = workbook.add_format({'bold': True, 'font_size': 11, 'align': 'right', 'valign': 'vcenter', 'border': 1, 'bg_color': '#e6e6e6'})
     fmt_total_money = workbook.add_format({'bold': True, 'font_size': 11, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'num_format': '¥#,##0.00', 'bg_color': '#e6e6e6'})
-
     worksheet.merge_range('B1:H2', company_info.get('name', "义乌市万昶进出口有限公司"), fmt_header_main)
     
     logo_b64 = company_info.get('logo_b64')
@@ -383,7 +393,6 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
     email = company_info.get('email', '')
     wechat = company_info.get('wechat', '')
     contact_text = f"TEL: {tel}    WeChat: {wechat}\nE-mail: {email}"
-    
     worksheet.merge_range('A3:H4', contact_text, fmt_header_sub)
     worksheet.merge_range('A5:H5', f"Address: {company_info.get('addr', '')}", fmt_header_sub)
     worksheet.merge_range('A7:H7', "* This price is valid for 10 days / Эта цена действительна в течение 10 дней", fmt_bold_red)
@@ -404,7 +413,6 @@ def generate_quotation_excel(items, service_fee_percent, total_domestic_freight,
         factory_price_unit = float(item.get('price_exw', 0))
         line_total_exw = factory_price_unit * qty
         total_exw_value += line_total_exw
-
         worksheet.set_row(current_row, 80)
         worksheet.write(current_row, 0, idx, fmt_cell_center)
         worksheet.write(current_row, 1, item.get('model', ''), fmt_cell_center)
@@ -521,15 +529,12 @@ def get_daily_motivation(client):
         except: st.session_state["motivation_quote"] = random.choice(local_quotes)
     return st.session_state["motivation_quote"]
 
-# 🔥 核心升级：AI 生成纯文本，Python 转 HTML，增加客户称呼判断
 def ai_generate_email_reply(client, context, user_username, shop_name, customer_name=None):
     greeting = f"Здравствуйте, {customer_name}" if customer_name else f"Здравствуйте, команда {shop_name}"
-    
     prompt = f"""
     Role: Professional Logistics Sales Rep from 988 Group.
     My Name: {user_username}
     Target Client: {shop_name} (Ozon Seller).
-    
     Task: Write a cold email body in Russian.
     Requirements:
     1. Greeting: "{greeting}, я увидел ваш магазин на Ozon и..." (Must use Russian).
@@ -537,7 +542,6 @@ def ai_generate_email_reply(client, context, user_username, shop_name, customer_
     3. Offer: We provide fast customs clearance and white tax compliance for their specific products.
     4. Format: PLAIN TEXT only. Use newlines for paragraphs. NO HTML tags (no <br>, no <p>).
     5. Tone: Professional, direct. No emojis.
-    
     Output JSON: {{ "body_text": "..." }}
     """
     try:
@@ -689,7 +693,6 @@ def admin_bulk_upload_to_pool(rows_to_insert):
                 res = supabase.table('leads').select('phone').in_('phone', batch).execute()
                 for item in res.data: existing.add(str(item['phone']))
         
-        # 允许入库：如果手机号不存在 或者 只有邮箱
         final_rows = [r for r in rows_to_insert if (not r['phone']) or (str(r['phone']) not in existing)]
         
         if not final_rows: return 0, "重复数据"
@@ -830,6 +833,31 @@ def check_api_health(cn_user, cn_key, openai_key):
             status["openai"] = True
     except Exception as e: status["msg"].append(f"OpenAI: {str(e)}")
     return status
+
+# 🔥【强力修复】针对 Excel 脏数据和俄罗斯号码
+def clean_phone_for_whatsapp(phone_raw):
+    # 1. 空值检查
+    if pd.isna(phone_raw) or phone_raw == "" or str(phone_raw).lower() == 'nan':
+        return None
+    
+    # 2. 强制转字符串，并按小数点分割 (防止 7925.0 这种情况)
+    s = str(phone_raw).split('.')[0].strip()
+    
+    # 3. 移除所有非数字字符 (+, -, 空格, 括号)
+    s = re.sub(r'\D', '', s)
+    
+    if not s: return None
+    
+    # 4. 俄罗斯/哈萨克斯坦号码特殊修正
+    # 情况A: 11位，以8开头 -> 改为7 (例如 89251234567 -> 79251234567)
+    if len(s) == 11 and s.startswith('8'):
+        s = '7' + s[1:]
+    
+    # 情况B: 10位 -> 补7 (例如 9251234567 -> 79251234567)
+    elif len(s) == 10:
+        s = '7' + s
+        
+    return s
 
 # ==========================================
 # 登录页
@@ -1109,19 +1137,17 @@ elif selected_nav == "Workbench":
                             if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
                             c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
                         else:
-                            # 🔥 修复：深度清洗电话号码，只保留数字
-                            raw_phone = str(item['phone'])
-                            clean_phone = re.sub(r'\D', '', raw_phone) 
+                            # 🔥 修复：深度清洗电话号码，强制 wa.me 短链接
+                            clean_phone = clean_phone_for_whatsapp(item['phone'])
                             
-                            # 俄罗斯号码特殊处理
-                            if len(clean_phone) == 11 and clean_phone.startswith('8'):
-                                clean_phone = '7' + clean_phone[1:]
-                            elif len(clean_phone) == 10:
-                                clean_phone = '7' + clean_phone
+                            if clean_phone:
+                                url = f"https://wa.me/{clean_phone}?text={urllib.parse.quote(item['ai_message'])}"
+                                
+                                c1.caption(f"正在呼叫: +{clean_phone}") # 调试显示
+                                c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
+                            else:
+                                c1.error("无效号码")
 
-                            url = f"https://api.whatsapp.com/send?phone={clean_phone}&text={urllib.parse.quote(item['ai_message'])}"
-                            
-                            c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
                             if c2.button("确认完成", key=f"fin_{item['id']}"):
                                 mark_lead_complete_secure(item['id'], st.session_state['username'])
                                 del st.session_state[key]; time.sleep(0.5); st.rerun()
