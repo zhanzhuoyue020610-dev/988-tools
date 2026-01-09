@@ -24,7 +24,7 @@ from PIL import Image
 
 # 尝试导入 imap_tools
 try:
-    from imap_tools import MailBox, AND, OR
+    from imap_tools import MailBox, AND
     IMAP_TOOLS_INSTALLED = True
 except ImportError:
     IMAP_TOOLS_INSTALLED = False
@@ -98,7 +98,7 @@ components.html("""
     </script>
 """, height=0)
 
-# 注入 CSS (深蓝流光风格)
+# 注入 CSS (保持深蓝流光风格)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -161,8 +161,6 @@ st.markdown("""
     .email-card.sent { border-left-color: #ff5546; }
     .email-meta { font-size: 11px; color: #888; margin-bottom: 5px; display: flex; justify-content: space-between; }
     .email-body { font-size: 13px; color: #e3e3e3; white-space: pre-wrap; line-height: 1.5; }
-    
-    .new-reply-badge { background-color: #ff5f56; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-right: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -291,7 +289,6 @@ class EmailEngine:
         except Exception as e:
             return False, str(e)
 
-    # 🔥 修复：更强力的邮件抓取 (只看收件箱，模糊匹配发件人)
     def fetch_thread(self, client_email):
         if not self.config or not IMAP_TOOLS_INSTALLED: return []
         emails = []
@@ -299,12 +296,11 @@ class EmailEngine:
             with MailBox(self.config['imap_server']).login(self.config['email'], self.config['password']) as mailbox:
                 # 1. 抓取收件箱 (INBOX) 里的回复
                 mailbox.folder.set('INBOX')
-                # 宽松匹配：只要发件人包含 client_email
                 for msg in mailbox.fetch(limit=10, reverse=True):
                     if client_email in msg.from_ or client_email in msg.to:
                         emails.append(self._parse_msg(msg, "Inbox"))
                 
-                # 2. 抓取已发送 (Sent) - 尝试常见文件夹名
+                # 2. 抓取已发送 (Sent)
                 sent_folders = ['Sent Messages', 'Sent Items', 'Sent', '[Gmail]/Sent Mail']
                 for f in mailbox.folder.list():
                     if any(s in f['name'] for s in sent_folders):
@@ -317,7 +313,6 @@ class EmailEngine:
         except Exception as e:
             print(f"IMAP Error: {e}")
             
-        # 按时间排序
         return sorted(emails, key=lambda x: x['date'], reverse=True)
 
     def _parse_msg(self, msg, folder):
@@ -330,12 +325,10 @@ class EmailEngine:
             "folder": folder
         }
     
-    # 🔥 全局同步功能：扫描收件箱，匹配数据库中的客户
     def sync_inbox_for_replies(self, username):
         if not self.config or not IMAP_TOOLS_INSTALLED: return 0
         count = 0
         try:
-            # 获取该业务员名下所有已联系的客户邮箱
             leads = supabase.table('leads').select('id, email').eq('assigned_to', username).eq('is_contacted', True).neq('email', None).execute().data
             if not leads: return 0
             
@@ -343,12 +336,9 @@ class EmailEngine:
             
             with MailBox(self.config['imap_server']).login(self.config['email'], self.config['password']) as mailbox:
                 mailbox.folder.set('INBOX')
-                # 只看最近 7 天的未读邮件，或者所有邮件
                 for msg in mailbox.fetch(limit=50, reverse=True):
-                    # 提取发件人邮箱
                     from_email = parseaddr(msg.from_)[1]
                     if from_email in lead_map:
-                        # 找到匹配！标记数据库
                         supabase.table('leads').update({'has_new_reply': True}).eq('id', lead_map[from_email]).execute()
                         count += 1
         except Exception as e:
@@ -531,7 +521,6 @@ def get_daily_motivation(client):
         except: st.session_state["motivation_quote"] = random.choice(local_quotes)
     return st.session_state["motivation_quote"]
 
-# 🔥 核心升级：AI 生成纯文本，Python 转 HTML，增加客户称呼判断
 def ai_generate_email_reply(client, context, user_username, shop_name, customer_name=None):
     greeting = f"Здравствуйте, {customer_name}" if customer_name else f"Здравствуйте, команда {shop_name}"
     
@@ -699,6 +688,7 @@ def admin_bulk_upload_to_pool(rows_to_insert):
                 res = supabase.table('leads').select('phone').in_('phone', batch).execute()
                 for item in res.data: existing.add(str(item['phone']))
         
+        # 允许入库：如果手机号不存在 或者 只有邮箱
         final_rows = [r for r in rows_to_insert if (not r['phone']) or (str(r['phone']) not in existing)]
         
         if not final_rows: return 0, "重复数据"
@@ -1118,7 +1108,16 @@ elif selected_nav == "Workbench":
                             if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
                             c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
                         else:
-                            url = f"https://wa.me/{item['phone']}?text={urllib.parse.quote(item['ai_message'])}"
+                            # 🔥 修复：深度清洗电话号码
+                            raw_phone = str(item['phone'])
+                            clean_phone = re.sub(r'\D', '', raw_phone) 
+                            
+                            # 俄罗斯号码特殊处理
+                            if len(clean_phone) == 11 and clean_phone.startswith('8'):
+                                clean_phone = '7' + clean_phone[1:]
+                            
+                            url = f"https://wa.me/{clean_phone}?text={urllib.parse.quote(item['ai_message'])}"
+                            
                             c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
                             if c2.button("确认完成", key=f"fin_{item['id']}"):
                                 mark_lead_complete_secure(item['id'], st.session_state['username'])
