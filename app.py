@@ -98,7 +98,7 @@ components.html("""
     </script>
 """, height=0)
 
-# 注入 CSS (保持深蓝流光风格)
+# 注入 CSS (深蓝流光风格)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
@@ -521,6 +521,7 @@ def get_daily_motivation(client):
         except: st.session_state["motivation_quote"] = random.choice(local_quotes)
     return st.session_state["motivation_quote"]
 
+# 🔥 核心升级：AI 生成纯文本，Python 转 HTML，增加客户称呼判断
 def ai_generate_email_reply(client, context, user_username, shop_name, customer_name=None):
     greeting = f"Здравствуйте, {customer_name}" if customer_name else f"Здравствуйте, команда {shop_name}"
     
@@ -1108,15 +1109,17 @@ elif selected_nav == "Workbench":
                             if c1.button("获取链接", key=f"btn_{item['id']}"): st.session_state[key] = True; st.rerun()
                             c2.button("标记完成", disabled=True, key=f"dis_{item['id']}")
                         else:
-                            # 🔥 修复：深度清洗电话号码
+                            # 🔥 修复：深度清洗电话号码，只保留数字
                             raw_phone = str(item['phone'])
                             clean_phone = re.sub(r'\D', '', raw_phone) 
                             
                             # 俄罗斯号码特殊处理
                             if len(clean_phone) == 11 and clean_phone.startswith('8'):
                                 clean_phone = '7' + clean_phone[1:]
-                            
-                            url = f"https://wa.me/{clean_phone}?text={urllib.parse.quote(item['ai_message'])}"
+                            elif len(clean_phone) == 10:
+                                clean_phone = '7' + clean_phone
+
+                            url = f"https://api.whatsapp.com/send?phone={clean_phone}&text={urllib.parse.quote(item['ai_message'])}"
                             
                             c1.markdown(f"<a href='{url}' target='_blank' style='display:block;text-align:center;background:#1e1f20;color:#e3e3e3;padding:10px;border-radius:20px;text-decoration:none;font-size:14px;'>跳转 WhatsApp ↗</a>", unsafe_allow_html=True)
                             if c2.button("确认完成", key=f"fin_{item['id']}"):
